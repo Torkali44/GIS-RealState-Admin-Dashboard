@@ -68,7 +68,7 @@
 
         <div class="flex w-full flex-wrap items-stretch gap-3 md:w-auto md:justify-end">
              <a
-                    href="{{ route('admin.houses.report', ['house' => $house, 'inline' => 1]) }}"
+                    href="{{ route('admin.houses.report', ['house' => $house, 'inline' => 1, 'v' => $reportV]) }}"
                     target="_blank"
                     class="group flex items-center gap-2 rounded-xl bg-emerald-500/20 px-4 py-3 font-bold text-emerald-400 transition hover:bg-emerald-500 hover:text-slate-950"
                 >
@@ -79,7 +79,7 @@
                     <span>عرض التقرير</span>
                 </a> 
 
-            <a href="{{ route('admin.houses.report', $house) }}"
+            <a href="{{ route('admin.houses.report', ['house' => $house, 'v' => $reportV]) }}"
                 class="group flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-6 py-3 font-bold text-slate-950 transition hover:bg-emerald-400 hover:shadow-[0_0_20px_rgba(16,185,129,0.2)] sm:w-auto">
                 <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"

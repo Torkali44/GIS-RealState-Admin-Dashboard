@@ -157,6 +157,7 @@ window.initInspectionUpload = function(form) {
 
             // تحديث منطقة الصور لهذا القسم فقط — بدون reload
             await refreshAreaPhotos(form);
+            bustReportLinks();
 
             // reset form للرفع التالي
             setTimeout(() => {
@@ -238,6 +239,8 @@ window.initInspectionUpload = function(form) {
                     setTimeout(() => window.location.reload(), 1000);
                 }
             }
+
+            syncReportLinksFromDocument(doc);
         } catch (err) {
             console.error('Refresh failed:', err);
             setTimeout(() => window.location.reload(), 1000);
@@ -274,5 +277,27 @@ window.initInspectionUpload = function(form) {
 
     function buildFileKey(file, index) {
         return [index, file.name, file.size, file.lastModified || 0].join('|');
+    }
+
+    /** تحديث روابط التقرير بعد رفع صور (بدون reload كامل) */
+    function bustReportLinks() {
+        document.querySelectorAll('a[href*="report"]').forEach((anchor) => {
+            try {
+                const url = new URL(anchor.href, window.location.origin);
+                url.searchParams.set('v', String(Date.now()));
+                url.searchParams.delete('refresh');
+                anchor.href = url.toString();
+            } catch (_) { /* ignore */ }
+        });
+    }
+
+    function syncReportLinksFromDocument(doc) {
+        const current = document.querySelectorAll('a[href*="report.pdf"], a[href*="inline"]');
+        const fresh = doc.querySelectorAll('a[href*="report.pdf"], a[href*="inline"]');
+        fresh.forEach((freshLink, i) => {
+            if (current[i]) {
+                current[i].href = freshLink.href;
+            }
+        });
     }
 };

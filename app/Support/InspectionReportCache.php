@@ -11,20 +11,35 @@ use Throwable;
  */
 final class InspectionReportCache
 {
-    public static function relativePath(PropertyHouse $house): string
+    /**
+     * بصمة التقرير — تتغير عند أي صورة/منزل/قسم يتعدّل.
+     */
+    public static function versionStamp(PropertyHouse $house): string
     {
         try {
+            $house = $house->fresh() ?? $house;
             $photoCount = (int) $house->photos()->count();
-            $stamp = $house->photos()->max('updated_at')
-                ?? $house->updated_at
-                ?? $house->created_at;
-            $unix = $stamp ? \Illuminate\Support\Carbon::parse($stamp)->getTimestamp() : 0;
-        } catch (Throwable) {
-            $photoCount = 0;
-            $unix = 0;
-        }
+            $photoMax = $house->photos()->max('updated_at');
+            $photoUnix = $photoMax
+                ? \Illuminate\Support\Carbon::parse($photoMax)->getTimestamp()
+                : 0;
+            $houseUnix = $house->updated_at
+                ? \Illuminate\Support\Carbon::parse($house->updated_at)->getTimestamp()
+                : 0;
+            $areaMax = $house->inspectionAreas()->max('updated_at');
+            $areaUnix = $areaMax
+                ? \Illuminate\Support\Carbon::parse($areaMax)->getTimestamp()
+                : 0;
 
-        return "reports/inspection-{$house->id}-pc{$photoCount}-u{$unix}.pdf";
+            return "pc{$photoCount}-p{$photoUnix}-h{$houseUnix}-a{$areaUnix}";
+        } catch (Throwable) {
+            return 'pc0-p0-h0-a0';
+        }
+    }
+
+    public static function relativePath(PropertyHouse $house): string
+    {
+        return 'reports/inspection-'.$house->id.'-'.self::versionStamp($house).'.pdf';
     }
 
     public static function absolutePath(PropertyHouse $house): string

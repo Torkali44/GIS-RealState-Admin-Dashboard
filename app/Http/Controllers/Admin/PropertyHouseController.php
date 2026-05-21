@@ -85,7 +85,9 @@ class PropertyHouseController extends Controller
 
         $sectionTemplates = \App\Models\SectionTemplate::ordered()->get(['id', 'name']);
 
-        return view('admin.houses.show', compact('house', 'noteCategories', 'sectionTemplates'));
+        $reportV = InspectionReportCache::versionStamp($house);
+
+        return view('admin.houses.show', compact('house', 'noteCategories', 'sectionTemplates', 'reportV'));
     }
 
     public function edit(PropertyHouse $house): View
@@ -105,6 +107,7 @@ class PropertyHouseController extends Controller
         ]);
 
         $house->update($data);
+        InspectionReportCache::forget($house);
 
         return redirect()
             ->route('admin.houses.show', $house)
@@ -221,7 +224,10 @@ class PropertyHouseController extends Controller
 
             return response()->file($absolutePath, [
                 'Content-Type' => 'application/pdf',
-                'Content-Disposition' => $disposition.'  ; filename="'.$filename.'"',
+                'Content-Disposition' => $disposition.'; filename="'.$filename.'"',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma' => 'no-cache',
+                'Expires' => '0',
             ])->deleteFileAfterSend(str_contains($absolutePath, storage_path('app'.DIRECTORY_SEPARATOR.'reports'.DIRECTORY_SEPARATOR.'tmp')));
         } catch (Throwable $e) {
             Log::error('PDF report generation failed', [

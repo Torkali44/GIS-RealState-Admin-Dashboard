@@ -19,7 +19,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class InspectionPhotoController extends Controller
 {
-    public function store(Request $request, PropertyHouse $house, InspectionArea $area): RedirectResponse
+    public function store(Request $request, PropertyHouse $house, InspectionArea $area): RedirectResponse|JsonResponse
     {
         $this->assertAreaBelongs($house, $area);
 
@@ -93,6 +93,11 @@ class InspectionPhotoController extends Controller
             }
         }
 
+        InspectionReportCache::forget($house);
+        if ($created > 0) {
+            $house->touch();
+        }
+
         if ($request->expectsJson() || $request->ajax()) {
             return response()->json([
                 'success' => true,
@@ -102,8 +107,6 @@ class InspectionPhotoController extends Controller
             ]);
         }
 
-        InspectionReportCache::forget($house);
-        $house->touch();
         return back()->with('status', 'تم رفع ' . $created . ' صور بنجاح.');
     }
 
@@ -333,6 +336,9 @@ class InspectionPhotoController extends Controller
 
         $photo->notes_json = empty($notes) ? null : $notes;
         $photo->save();
+
+        InspectionReportCache::forget($house);
+        $house->touch();
 
         return response()->json([
             'success' => true,
