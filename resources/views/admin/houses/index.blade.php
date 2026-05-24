@@ -3,6 +3,18 @@
 @section('title', 'المنازل')
 
 @section('content')
+    @php
+        $driveOAuthNeeded = \App\Services\GoogleDriveService::authMode() === 'oauth'
+            && \App\Services\GoogleDriveService::oauthClientConfigured()
+            && ! \App\Services\GoogleDriveService::isOAuthConnected();
+    @endphp
+    @if ($driveOAuthNeeded)
+        <div class="mb-6 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <strong>Google Drive:</strong> اربط حساب Gmail لرفع الصور والتقارير (الفولدرات وحدها لا تكفي مع Service Account).
+            <a href="{{ route('admin.google-drive.connect') }}" class="mr-3 inline-flex rounded-lg bg-amber-500 px-4 py-2 font-bold text-slate-950 hover:bg-amber-400">ربط Google Drive</a>
+        </div>
+    @endif
+
     <div class="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
             <h1 class="text-2xl font-bold text-white">منازل المعاينة</h1>

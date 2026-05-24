@@ -18,6 +18,10 @@ class PropertyHouse extends Model
         'reference_code',
         'inspection_date',
         'notes',
+        'drive_folder_id',
+        'drive_pdf_id',
+        'drive_word_file_id',
+
     ];
   protected function casts(): array
     {

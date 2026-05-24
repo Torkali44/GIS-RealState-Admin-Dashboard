@@ -7,8 +7,15 @@ use App\Models\InspectionArea;
 use App\Models\InspectionPhoto;
 use App\Models\NoteCategory;
 use App\Models\PropertyHouse;
+use App\Services\DriveMediaService;
+use App\Services\DriveReportSyncService;
+use App\Services\GoogleDriveService;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 use App\Support\RasterImageForTcpdf;
 use App\Support\InspectionReportCache;
+use App\Support\PhotoImageUrl;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -39,6 +46,7 @@ class InspectionPhotoController extends Controller
         $disk = Storage::disk('public');
         $created = 0;
         $skipped = 0;
+        $driveFailed = 0;
         $batchId = $request->input('upload_batch_id');
         $fileKeys = $request->input('upload_file_keys', []);
 
@@ -73,7 +81,7 @@ class InspectionPhotoController extends Controller
 
             $maxSort++;
             try {
-                InspectionPhoto::create([
+                $photo = InspectionPhoto::create([
                     'inspection_area_id' => $area->id,
                     'original_path' => $path,
                     'original_filename' => $file->getClientOriginalName(),
@@ -81,6 +89,9 @@ class InspectionPhotoController extends Controller
                     'upload_batch_id' => $batchId,
                     'upload_file_key' => $fileKey,
                 ]);
+                if (DriveMediaService::enabled() && ! DriveMediaService::pushPhoto($photo)) {
+                    $driveFailed++;
+                }
                 $created++;
             } catch (QueryException $e) {
                 if ((string) $e->getCode() !== '23000') {
@@ -96,18 +107,29 @@ class InspectionPhotoController extends Controller
         InspectionReportCache::forget($house);
         if ($created > 0) {
             $house->touch();
+            DriveReportSyncService::scheduleSync($house);
+        }
+
+        $message = 'تم رفع '.$created.' صور بنجاح.';
+        if ($driveFailed > 0) {
+            $message .= ' لكن فشل رفع '.$driveFailed.' صورة إلى Google Drive (الصور محفوظة على السيرفر).';
+            if (DriveMediaService::lastError()) {
+                $message .= ' السبب: '.DriveMediaService::lastError();
+            }
         }
 
         if ($request->expectsJson() || $request->ajax()) {
             return response()->json([
                 'success' => true,
-                'message' => 'تم رفع ' . $created . ' صور بنجاح.',
+                'message' => $message,
                 'count' => $created,
                 'skipped' => $skipped,
+                'drive_failed' => $driveFailed,
+                'drive_synced' => $driveFailed === 0,
             ]);
         }
 
-        return back()->with('status', 'تم رفع ' . $created . ' صور بنجاح.');
+        return back()->with($driveFailed > 0 ? 'error' : 'status', $message);
     }
 
     public function storeMerged(Request $request, PropertyHouse $house, InspectionArea $area): RedirectResponse
@@ -129,7 +151,7 @@ class InspectionPhotoController extends Controller
         $this->copyUploadedToPublicStorage($path, $house);
 
         $maxSort = (int) $area->photos()->max('sort_order');
-        InspectionPhoto::create([
+        $photo = InspectionPhoto::create([
             'inspection_area_id' => $area->id,
             'original_path' => $path,
             'composite_path' => $path,
@@ -138,8 +160,14 @@ class InspectionPhotoController extends Controller
             'sort_order' => $maxSort + 1,
         ]);
 
+        if (DriveMediaService::enabled()) {
+            DriveMediaService::pushPhoto($photo);
+        }
+
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return back()->with('status', 'تم دمج الصور وحفظها كصورة جديدة.');
     }
 
@@ -224,21 +252,73 @@ class InspectionPhotoController extends Controller
      * عرض الصورة عبر التطبيق (لا يعتمد على symlink أو تطابق APP_URL مع عنوان المتصفح).
      */
 
-    public function image(Request $request, PropertyHouse $house, InspectionPhoto $photo)
+    public function image(Request $request, PropertyHouse $house, InspectionPhoto $photo): BinaryFileResponse|Response
     {
-        $this->assertPhotoBelongs($house, $photo);
+        @ini_set('max_execution_time', '120');
+        @ini_set('memory_limit', '256M');
 
-        $useComposite = $request->boolean('c') && $photo->composite_path;
-
-        $relative = $useComposite
-            ? $photo->composite_path
-            : $photo->original_path;
-
-        if (!$relative) {
-            abort(404);
+        if (! PhotoImageUrl::allows($request, $house, $photo)) {
+            abort(403, 'رابط الصورة غير صالح — حدّث الصفحة.');
         }
 
-        return redirect('/storage/' . $relative);
+        $this->assertPhotoBelongs($house, $photo);
+
+        $useComposite = $request->boolean('c') && ($photo->composite_path || $photo->drive_composite_file_id);
+
+        DriveMediaService::ensureStorageDirectories();
+
+        $absolute = DriveMediaService::resolveImageForDisplay($photo, $useComposite);
+
+        if (! $absolute && $photo->drive_file_id) {
+            DriveMediaService::buildPersistentCache($photo, $useComposite);
+            $absolute = DriveMediaService::resolveImageForDisplay($photo->fresh(), $useComposite);
+        }
+
+        if (! $absolute && DriveMediaService::enabled() && DriveMediaService::hasLocalCopy($photo)) {
+            DriveMediaService::pushPhoto($photo);
+            $absolute = DriveMediaService::resolveImageForDisplay($photo->fresh(), $useComposite);
+        }
+
+        if ($absolute) {
+            return $this->binaryImageFileResponse($absolute);
+        }
+
+        Log::error('Photo image 404', [
+            'photo_id' => $photo->id,
+            'house_id' => $house->id,
+            'drive_file_id' => $photo->drive_file_id,
+            'local_cached_path' => $photo->local_cached_path,
+            'drive_error' => DriveMediaService::lastError(),
+        ]);
+
+        abort(404, 'تعذر تحميل الصورة. من صفحة المنزل اضغط «إصلاح عرض الصور (كاش محلي)».');
+    }
+
+    private function binaryImageFileResponse(string $absolute): BinaryFileResponse|Response
+    {
+        if (! is_readable($absolute)) {
+            abort(404, 'ملف الصورة غير قابل للقراءة على السيرفر.');
+        }
+
+        $mime = mime_content_type($absolute) ?: 'image/jpeg';
+
+        try {
+            return response()->file($absolute, [
+                'Content-Type' => $mime,
+                'Cache-Control' => 'private, max-age=300',
+            ]);
+        } catch (Throwable) {
+            $bytes = file_get_contents($absolute);
+            if ($bytes === false || $bytes === '') {
+                abort(404, 'تعذر قراءة ملف الصورة.');
+            }
+
+            return response($bytes, 200, [
+                'Content-Type' => $mime,
+                'Content-Length' => (string) strlen($bytes),
+                'Cache-Control' => 'private, max-age=300',
+            ]);
+        }
     }
 
 
@@ -300,14 +380,22 @@ class InspectionPhotoController extends Controller
 
         $photo->save();
 
+        if (DriveMediaService::enabled()) {
+            DriveMediaService::pushPhoto($photo->fresh());
+        }
+
         if ($request->filled('redirect_to')) {
             InspectionReportCache::forget($house);
-        $house->touch();
-        return redirect($request->input('redirect_to'))->with('status', 'تم حفظ التعديلات على الصورة.');
+            $house->touch();
+            DriveReportSyncService::scheduleSync($house);
+
+            return redirect($request->input('redirect_to'))->with('status', 'تم حفظ التعديلات على الصورة.');
         }
 
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return back()->with('status', 'تم حفظ التعديلات على الصورة.');
     }
 
@@ -318,6 +406,8 @@ class InspectionPhotoController extends Controller
 
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return back()->with('status', 'تم حذف الصورة.');
     }
 
@@ -337,8 +427,17 @@ class InspectionPhotoController extends Controller
         $photo->notes_json = empty($notes) ? null : $notes;
         $photo->save();
 
+        if (DriveMediaService::enabled()) {
+            try {
+                \App\Services\GoogleDriveService::syncPhotoNotesFile($photo->fresh());
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Drive notes sync failed', ['photo_id' => $photo->id, 'error' => $e->getMessage()]);
+            }
+        }
+
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
 
         return response()->json([
             'success' => true,
@@ -399,6 +498,8 @@ class InspectionPhotoController extends Controller
 
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return back()->with('status', 'تم حذف الصور المحددة بنجاح.');
     }
 
@@ -427,6 +528,8 @@ class InspectionPhotoController extends Controller
 
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return back()->with('status', 'تم حذف ' . $deleted . ' صورة مكررة بدون أسهم أو وصف.');
     }
 
@@ -456,12 +559,16 @@ class InspectionPhotoController extends Controller
 
         if ($request->filled('redirect_to')) {
             InspectionReportCache::forget($house);
-        $house->touch();
-        return redirect($request->input('redirect_to'))->with('status', 'تم تحديث ترتيب الصور.');
+            $house->touch();
+            DriveReportSyncService::scheduleSync($house);
+
+            return redirect($request->input('redirect_to'))->with('status', 'تم تحديث ترتيب الصور.');
         }
 
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return back()->with('status', 'تم تحديث ترتيب الصور.');
     }
 

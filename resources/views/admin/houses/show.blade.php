@@ -96,6 +96,29 @@
                 </svg>
                 <span>تحميل Word</span>
             </a>
+
+            @if ($driveConfigured && $house->drive_folder_id)
+                <a href="https://drive.google.com/drive/folders/{{ $house->drive_folder_id }}"
+                    target="_blank"
+                    class="group flex w-full items-center justify-center gap-2 rounded-xl border border-blue-500/40 bg-slate-900 px-4 py-3 font-bold text-blue-300 transition hover:bg-blue-600 hover:text-white sm:w-auto">
+                    <span>فتح فولدر Drive</span>
+                </a>
+            @endif
+
+            @if ($house->drive_pdf_id)
+                <a href="https://drive.google.com/file/d/{{ $house->drive_pdf_id }}/view"
+                    target="_blank"
+                    class="group flex w-full items-center justify-center gap-2 rounded-xl border border-blue-500/40 bg-slate-900 px-4 py-3 font-bold text-blue-300 transition hover:bg-blue-600 hover:text-white sm:w-auto">
+                    <span>التقرير PDF على Drive</span>
+                </a>
+            @endif
+            @if ($house->drive_word_file_id)
+                <a href="https://drive.google.com/file/d/{{ $house->drive_word_file_id }}/view"
+                    target="_blank"
+                    class="group flex w-full items-center justify-center gap-2 rounded-xl border border-blue-500/40 bg-slate-900 px-4 py-3 font-bold text-blue-300 transition hover:bg-blue-600 hover:text-white sm:w-auto">
+                    <span>التقرير الكتابي (.doc) على Drive</span>
+                </a>
+            @endif
             
                 @if ($house->inspectionAreas->isNotEmpty())
                 <form id="finalize-report-form" method="post" action="{{ route('admin.houses.report.finalize', $house) }}" class="w-full sm:w-auto">
@@ -128,6 +151,43 @@
         <div class="mb-10 rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
             <h3 class="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">ملاحظات عامة</h3>
             <p class="text-slate-300 leading-relaxed">{{ $house->notes }}</p>
+        </div>
+    @endif
+
+    @if ($driveOAuthNeeded ?? false)
+        <div class="mb-6 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <strong>ربط Google Drive مطلوب:</strong> الفولدرات قد تظهر لكن الصور والتقارير لا تُرفع بدون ربط حسابك (Service Account لا يرفع ملفات على Gmail).
+            <a href="{{ route('admin.google-drive.connect') }}" class="mr-3 inline-flex rounded-lg bg-amber-500 px-4 py-2 font-bold text-slate-950 hover:bg-amber-400">ربط Google Drive</a>
+            <span class="text-amber-200/80">راجع <code class="rounded bg-slate-900 px-1.5 py-0.5">GOOGLE_DRIVE_SETUP.md</code></span>
+        </div>
+    @elseif ($driveConfigured)
+        <div class="mb-6 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">
+            <strong>Google Drive:</strong> التخزين الأساسي على Drive. السيرفر يحتفظ بكاش مؤقت للعرض والأسهم فقط (يُحذف من <code class="rounded bg-slate-900 px-1">public</code> بعد الرفع).
+            @if ($house->drive_folder_id)
+                <a href="https://drive.google.com/drive/folders/{{ $house->drive_folder_id }}" target="_blank" class="mr-2 underline text-blue-300">فولدر هذا المنزل</a>
+            @endif
+            @if (($pendingDrivePhotos ?? 0) > 0)
+                <form method="post" action="{{ route('admin.houses.drive.sync', $house) }}" class="inline mr-2">
+                    @csrf
+                    <button type="submit" class="rounded-lg bg-blue-600 px-3 py-1 text-xs font-bold text-white hover:bg-blue-500">
+                        مزامنة {{ $pendingDrivePhotos }} صورة قديمة مع Drive
+                    </button>
+                </form>
+            @endif
+            <form method="post" action="{{ route('admin.houses.drive.repair-cache', $house) }}" class="inline mr-2">
+                @csrf
+                <button type="submit" class="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-500">
+                    إصلاح عرض الصور (كاش محلي)
+                </button>
+            </form>
+            <form method="post" action="{{ route('admin.google-drive.disconnect') }}" class="inline mr-2">
+                @csrf
+                <button type="submit" class="text-xs text-blue-300/70 underline hover:text-blue-200">فصل الحساب</button>
+            </form>
+        </div>
+    @else
+        <div class="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Google Drive غير مفعّل — راجع <code class="rounded bg-slate-900 px-1.5 py-0.5">GOOGLE_DRIVE_SETUP.md</code>
         </div>
     @endif
 
@@ -375,12 +435,8 @@
                             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                                 @foreach ($photosPaginator as $photo)
                                     @php
-                                        $imgRoute = route('admin.houses.photos.image', [
-                                            'house' => $house,
-                                            'photo' => $photo,
-                                            'c' => $photo->composite_path ? 1 : 0,
-                                        ], false);
-                                        $thumbRoute = $imgRoute . (str_contains($imgRoute, '?') ? '&' : '?') . 'thumb=1';
+                                        $imgRoute = \App\Support\PhotoImageUrl::make($house, $photo, (bool) ($photo->composite_path || $photo->drive_composite_file_id));
+                                        $thumbRoute = $imgRoute;
                                         $photoNotesCount = count($photo->notesList());
                                         $photoNotesForModal = method_exists($photo, 'notesEntries')
                                             ? $photo->notesEntries()

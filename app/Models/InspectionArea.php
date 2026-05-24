@@ -12,6 +12,7 @@ class InspectionArea extends Model
         'property_house_id',
         'name',
         'sort_order',
+        'drive_folder_id',
     ];
 
     protected function casts(): array

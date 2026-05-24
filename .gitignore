@@ -36,3 +36,5 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+/storage/app/google-drive-credentials.json
+/storage/app/google-drive-oauth-token.json

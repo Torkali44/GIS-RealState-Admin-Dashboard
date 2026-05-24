@@ -36,9 +36,10 @@
                                 data-editor-viewport
                                 style="max-height: min(68vh, 640px); min-height: 200px;">
                                 <div class="relative inline-block shrink-0 select-none will-change-transform" data-annotate-wrap>
-                                    <img src="{{ route('admin.houses.photos.image', ['house' => $house, 'photo' => $photo], false) }}"
+                                    <img src="{{ \App\Support\PhotoImageUrl::make($house, $photo, (bool) ($photo->composite_path || $photo->drive_composite_file_id)) }}"
                                         alt="" class="relative z-0 block max-w-none cursor-crosshair rounded-lg shadow-lg"
-                                        data-annotate-image draggable="false" />
+                                        data-annotate-image draggable="false"
+                                        onerror="this.alt='تعذر تحميل الصورة — حدّث الصفحة أو راجع Drive';" />
                                     <svg data-arrow-svg class="absolute left-0 top-0 z-[1] hidden h-full w-full"
                                         viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
                                         <line data-arrow-line class="hidden" />

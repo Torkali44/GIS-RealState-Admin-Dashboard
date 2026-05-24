@@ -21,6 +21,11 @@ class InspectionPhoto extends Model
         'original_filename',
         'upload_batch_id',
         'upload_file_key',
+        'drive_file_id',
+        'drive_composite_file_id',
+        'drive_notes_file_id',
+        'local_cached_path',
+        'processed_cache_path',
     ];
 
     protected function casts(): array
@@ -123,13 +128,8 @@ class InspectionPhoto extends Model
 
     public function reportImagePath(): ?string
     {
-        $disk = Storage::disk('public');
-        $path = $this->composite_path ?? $this->original_path;
-        if (!$path || !$disk->exists($path)) {
-            return null;
-        }
-
-        return $disk->path($path);
+        return \App\Services\DriveMediaService::resolveImagePath($this, true)
+            ?? \App\Services\DriveMediaService::resolveImagePath($this, false);
     }
 
     public function deleteStoredFiles(): void
@@ -139,6 +139,10 @@ class InspectionPhoto extends Model
             if ($p && $disk->exists($p)) {
                 $disk->delete($p);
             }
+        }
+
+        if (\App\Services\DriveMediaService::enabled()) {
+            \App\Services\DriveMediaService::deleteDriveAssets($this);
         }
     }
 

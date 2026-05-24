@@ -8,6 +8,7 @@ use App\Models\PropertyHouse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\DriveReportSyncService;
 use App\Support\InspectionReportCache;
 
 class InspectionAreaController extends Controller
@@ -27,6 +28,8 @@ class InspectionAreaController extends Controller
 
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return back()->with('status', 'تمت إضافة القسم.');
     }
 
@@ -68,6 +71,8 @@ class InspectionAreaController extends Controller
 
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return redirect()
             ->to(route('admin.houses.show', $house) . '#area-' . $area->id)
             ->with('status', 'تم تحديث بيانات القسم.');
@@ -87,6 +92,8 @@ class InspectionAreaController extends Controller
 
         InspectionReportCache::forget($house);
         $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
         return back()->with('status', 'تم حذف القسم وجميع صوره.');
     }
 

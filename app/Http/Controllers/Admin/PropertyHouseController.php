@@ -7,6 +7,9 @@ use App\Models\NoteCategory;
 use App\Models\PropertyHouse;
 use App\Services\InspectionReportPdfGenerator;
 use App\Services\InspectionReportWordGenerator;
+use App\Services\DriveMediaService;
+use App\Services\DriveReportSyncService;
+use App\Services\GoogleDriveService;
 use App\Support\InspectionReportCache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\RedirectResponse;
@@ -86,8 +89,32 @@ class PropertyHouseController extends Controller
         $sectionTemplates = \App\Models\SectionTemplate::ordered()->get(['id', 'name']);
 
         $reportV = InspectionReportCache::versionStamp($house);
+        $driveConfigured = GoogleDriveService::isConfigured();
+        $driveOAuthNeeded = GoogleDriveService::authMode() === 'oauth'
+            && GoogleDriveService::oauthClientConfigured()
+            && ! GoogleDriveService::isOAuthConnected();
 
-        return view('admin.houses.show', compact('house', 'noteCategories', 'sectionTemplates', 'reportV'));
+        $pendingDrivePhotos = 0;
+        if ($driveConfigured) {
+            $house->loadMissing('inspectionAreas.photos');
+            foreach ($house->inspectionAreas as $area) {
+                foreach ($area->photos as $photo) {
+                    if (DriveMediaService::needsDriveUpload($photo)) {
+                        $pendingDrivePhotos++;
+                    }
+                }
+            }
+        }
+
+        return view('admin.houses.show', compact(
+            'house',
+            'noteCategories',
+            'sectionTemplates',
+            'reportV',
+            'driveConfigured',
+            'driveOAuthNeeded',
+            'pendingDrivePhotos'
+        ));
     }
 
     public function edit(PropertyHouse $house): View
@@ -108,6 +135,7 @@ class PropertyHouseController extends Controller
 
         $house->update($data);
         InspectionReportCache::forget($house);
+        DriveReportSyncService::scheduleSync($house);
 
         return redirect()
             ->route('admin.houses.show', $house)
@@ -220,6 +248,14 @@ class PropertyHouseController extends Controller
                 throw new \RuntimeException('ملف PDF غير موجود بعد التوليد.');
             }
 
+            if (DriveMediaService::enabled()) {
+                try {
+                    GoogleDriveService::uploadPdfReport($house, $absolutePath);
+                } catch (Throwable $driveEx) {
+                    Log::warning('Drive PDF upload failed', ['house_id' => $house->id, 'error' => $driveEx->getMessage()]);
+                }
+            }
+
             $disposition = $request->query('inline') ? 'inline' : 'attachment';
 
             return response()->file($absolutePath, [
@@ -248,6 +284,14 @@ class PropertyHouseController extends Controller
     {
         $filename = 'inspection-notes-'.$house->id.'.doc';
         $html = $generator->renderHtml($house);
+
+        if (DriveMediaService::enabled()) {
+            try {
+                GoogleDriveService::uploadWordReport($house, $html);
+            } catch (Throwable $e) {
+                Log::warning('Drive Word upload failed', ['house_id' => $house->id, 'error' => $e->getMessage()]);
+            }
+        }
 
         return response($html, 200, [
             'Content-Type' => 'application/msword; charset=UTF-8',
