@@ -108,6 +108,15 @@ class InspectionPhoto extends Model
         return implode("\n", $parts);
     }
 
+    /**
+     * Scope: order photos by original_filename with natural sorting.
+     */
+    public function scopeOrderByFilename($query)
+    {
+        return $query->orderByRaw('LENGTH(original_filename) ASC')
+                     ->orderBy('original_filename', 'ASC');
+    }
+
     public function inspectionArea(): BelongsTo
     {
         return $this->belongsTo(InspectionArea::class);

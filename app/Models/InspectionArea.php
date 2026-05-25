@@ -29,6 +29,7 @@ class InspectionArea extends Model
 
     public function photos(): HasMany
     {
+       
         return $this->hasMany(InspectionPhoto::class)->orderBy('sort_order')->orderBy('id');
     }
 }

@@ -36,7 +36,7 @@
                                 data-editor-viewport
                                 style="max-height: min(68vh, 640px); min-height: 200px;">
                                 <div class="relative inline-block shrink-0 select-none will-change-transform" data-annotate-wrap>
-                                    <img src="{{ \App\Support\PhotoImageUrl::make($house, $photo, (bool) ($photo->composite_path || $photo->drive_composite_file_id)) }}"
+                                    <img src="{{ \App\Support\PhotoImageUrl::make($house, $photo, false) }}"
                                         alt="" class="relative z-0 block max-w-none cursor-crosshair rounded-lg shadow-lg"
                                         data-annotate-image draggable="false"
                                         onerror="this.alt='تعذر تحميل الصورة — حدّث الصفحة أو راجع Drive';" />
@@ -148,7 +148,7 @@
 
                 <div class="space-y-4 border-t border-slate-800 pt-6">
                     <div class="flex flex-wrap items-center gap-3">
-                        <button type="submit"
+                        <button type="submit" name="redirect_to" value="{{ route('admin.houses.show', $house) }}"
                             class="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-8 py-3 font-bold text-slate-950 transition hover:bg-emerald-400">
                             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />

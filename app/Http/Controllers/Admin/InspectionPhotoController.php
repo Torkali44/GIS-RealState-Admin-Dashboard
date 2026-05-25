@@ -50,7 +50,26 @@ class InspectionPhotoController extends Controller
         $batchId = $request->input('upload_batch_id');
         $fileKeys = $request->input('upload_file_keys', []);
 
-        foreach ($request->file('photos', []) as $index => $file) {
+        $uploadedFiles = $request->file('photos', []);
+        $pairedFiles = [];
+        foreach ($uploadedFiles as $index => $file) {
+            if ($file) {
+                $pairedFiles[] = [
+                    'index' => $index,
+                    'file' => $file,
+                    'filename' => $file->getClientOriginalName(),
+                ];
+            }
+        }
+
+        // Natural sort by filename before processing so initial sort_order matches natural filename sorting
+        usort($pairedFiles, function ($a, $b) {
+            return strnatcasecmp($a['filename'], $b['filename']);
+        });
+
+        foreach ($pairedFiles as $pair) {
+            $index = $pair['index'];
+            $file = $pair['file'];
             if (!$file) {
                 continue;
             }
@@ -384,19 +403,15 @@ class InspectionPhotoController extends Controller
             DriveMediaService::pushPhoto($photo->fresh());
         }
 
-        if ($request->filled('redirect_to')) {
-            InspectionReportCache::forget($house);
-            $house->touch();
-            DriveReportSyncService::scheduleSync($house);
-
-            return redirect($request->input('redirect_to'))->with('status', 'تم حفظ التعديلات على الصورة.');
-        }
-
         InspectionReportCache::forget($house);
         $house->touch();
         DriveReportSyncService::scheduleSync($house);
 
-        return back()->with('status', 'تم حفظ التعديلات على الصورة.');
+        if ($request->filled('redirect_to')) {
+            return redirect($request->input('redirect_to'))->with('status', 'تم حفظ التعديلات على الصورة.');
+        }
+
+        return redirect()->route('admin.houses.show', $house)->with('status', 'تم حفظ التعديلات على الصورة.');
     }
 
     public function destroy(PropertyHouse $house, InspectionPhoto $photo): RedirectResponse

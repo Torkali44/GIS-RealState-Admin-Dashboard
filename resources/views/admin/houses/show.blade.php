@@ -398,7 +398,10 @@
                             $scalarQuery = collect(request()->query())->filter(function ($v) {
                                 return is_scalar($v);
                             })->all();
-                            $photosPaginator = $area->photos()->orderBy('sort_order')->orderBy('id')->paginate($perPage, ['*'], 'area_'.$area->id.'_page');
+                            $photosPaginator = $area->photos()
+                                ->orderBy('sort_order')
+                                ->orderBy('id')
+                                ->paginate($perPage, ['*'], 'area_'.$area->id.'_page');
                             $photosPaginator->appends($scalarQuery);
                         @endphp
 

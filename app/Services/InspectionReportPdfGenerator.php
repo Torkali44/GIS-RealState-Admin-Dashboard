@@ -172,7 +172,6 @@ class InspectionReportPdfGenerator
 
             $photos = $area->photos()
                 ->orderBy('sort_order')
-                ->orderBy('id')
                 ->get();
 
             foreach ($photos as $photoIndex => $photo) {
@@ -242,7 +241,6 @@ class InspectionReportPdfGenerator
             foreach ($areas as $area) {
                 $photos = $area->photos()
                     ->orderBy('sort_order')
-                    ->orderBy('id')
                     ->get();
 
                 if ($photos->isEmpty()) {
