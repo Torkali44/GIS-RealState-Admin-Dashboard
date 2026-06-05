@@ -9,10 +9,13 @@ return [
     | مثال نسبي: images/company-logo.png
     | مثال مطلق: /home/username/public_html/images/company-logo.png
     */
-    'logo_path' => env('REPORT_LOGO_PATH', 'images/company-logo.png'),
+    'logo_path' => env('REPORT_LOGO_PATH', 'images/company-logo_new.png'),
 
-    /** عرض الشعار في PDF (مم) — يُحسب الارتفاع تلقائياً من نسبة الصورة */
-    'logo_width_mm' => (float) env('REPORT_LOGO_WIDTH_MM', 30),
+    /** عرض الشعار في PDF (مم) */
+    'logo_width_mm' => (float) env('REPORT_LOGO_WIDTH_MM', 44),
+
+    /** ارتفاع الشعار في PDF (مم) */
+    'logo_height_mm' => (float) env('REPORT_LOGO_HEIGHT_MM', 20),
 
     /** أقل عرض بالبكسل قبل التضخيم للطباعة الواضحة في PDF */
     'logo_embed_min_width' => (int) env('REPORT_LOGO_EMBED_MIN_WIDTH', 420),

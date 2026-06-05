@@ -644,6 +644,19 @@
                 grid-template-columns: repeat(3, minmax(0, 1fr));
             }
         }
+        #pdf-unannotated-grid .pdf-unannotated-thumb {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            min-height: 5.5rem;
+            overflow: hidden;
+            background: rgba(0, 0, 0, 0.45);
+        }
+        #pdf-unannotated-grid .pdf-unannotated-thumb img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
     </style>
     <dialog id="pdf-unannotated-dialog">
         <div class="overflow-hidden rounded-2xl border border-amber-500/40 bg-slate-900 text-white shadow-2xl">
@@ -663,8 +676,8 @@
             <div id="pdf-unannotated-grid" class="grid max-h-[min(65vh,32rem)] gap-3 overflow-y-auto p-4 sm:gap-4 sm:p-5"></div>
             <div class="flex flex-col gap-2 border-t border-slate-800 p-4 sm:flex-row sm:flex-wrap sm:justify-end sm:p-5">
                 <button type="button" id="pdf-unannotated-delete"
-                    class="w-full rounded-xl bg-red-500/90 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-400 sm:w-auto sm:min-w-[9rem]">
-                    حذف المحدد
+                    class="w-full rounded-xl bg-red-500/90 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-400 sm:w-auto sm:min-w-[12rem]">
+                    حذف وتوليد التقرير
                 </button>
                 <button type="button" id="pdf-unannotated-continue"
                     class="w-full rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 sm:w-auto sm:min-w-[11rem]">
@@ -717,11 +730,74 @@
                 }
 
                 var pdfPendingUrl = null;
+                var pdfPendingTarget = null;
                 var pdfDialog = document.getElementById('pdf-unannotated-dialog');
                 var pdfGrid = document.getElementById('pdf-unannotated-grid');
                 var pdfSelectAll = document.getElementById('pdf-unannotated-select-all');
                 var pdfCountLabel = document.getElementById('pdf-unannotated-count');
+                var pdfDeleteForm = document.getElementById('pdf-unannotated-delete-form');
                 var unannotatedUrl = @json(route('admin.houses.report.unannotated', $house));
+
+                function pdfGoToReport() {
+                    if (!pdfPendingUrl) return;
+                    if (pdfPendingTarget === '_blank') {
+                        window.open(pdfPendingUrl, '_blank');
+                    } else {
+                        window.location.href = pdfPendingUrl;
+                    }
+                }
+
+                function pdfDeletePhotosAndReport(photoIds) {
+                    if (!pdfDeleteForm || !pdfPendingUrl || !photoIds.length) return;
+
+                    var tokenInput = pdfDeleteForm.querySelector('input[name="_token"]');
+                    var csrf = tokenInput ? tokenInput.value : '';
+                    var exportUrl = pdfPendingUrl;
+                    var exportTarget = pdfPendingTarget;
+                    var pdfDelete = document.getElementById('pdf-unannotated-delete');
+                    var pdfContinueBtn = document.getElementById('pdf-unannotated-continue');
+
+                    if (pdfDialog) pdfDialog.close();
+                    if (pdfDelete) {
+                        pdfDelete.disabled = true;
+                        pdfDelete.textContent = 'جاري الحذف وتوليد التقرير...';
+                    }
+                    if (pdfContinueBtn) pdfContinueBtn.disabled = true;
+
+                    var fd = new FormData();
+                    fd.append('_token', csrf);
+                    fd.append('_method', 'DELETE');
+                    photoIds.forEach(function (id) {
+                        fd.append('photo_ids[]', String(id));
+                    });
+
+                    fetch(pdfDeleteForm.action, {
+                        method: 'POST',
+                        body: fd,
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Accept': 'application/json',
+                        },
+                        credentials: 'same-origin',
+                    })
+                        .then(function (res) {
+                            if (!res.ok) throw new Error('delete failed');
+                            return res.json();
+                        })
+                        .then(function () {
+                            pdfPendingUrl = exportUrl;
+                            pdfPendingTarget = exportTarget;
+                            pdfGoToReport();
+                        })
+                        .catch(function () {
+                            if (pdfDelete) {
+                                pdfDelete.disabled = false;
+                                pdfDelete.textContent = 'حذف وتوليد التقرير';
+                            }
+                            if (pdfContinueBtn) pdfContinueBtn.disabled = false;
+                            window.location.href = exportUrl;
+                        });
+                }
 
                 function pdfUpdateCountLabel() {
                     if (!pdfGrid || !pdfCountLabel) return;
@@ -734,25 +810,46 @@
                     }
                 }
 
-                function openPdfUnannotatedDialog(data, exportUrl) {
+                function openPdfUnannotatedDialog(data, exportUrl, exportTarget) {
                     pdfPendingUrl = exportUrl;
+                    pdfPendingTarget = exportTarget || null;
                     if (!pdfGrid || !pdfDialog) {
-                        window.location.href = exportUrl;
+                        pdfGoToReport();
                         return;
                     }
                     pdfGrid.innerHTML = '';
                     (data.photos || []).forEach(function (p) {
                         var cell = document.createElement('label');
-                        cell.className = 'relative flex cursor-pointer flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-md transition hover:border-amber-500/50';
+                        cell.className = 'relative block cursor-pointer overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-md transition hover:border-amber-500/50';
                         cell.title = (p.area_name || '') + ' #' + p.id;
+
+                        var check = document.createElement('input');
+                        check.type = 'checkbox';
+                        check.setAttribute('data-pdf-photo-check', '');
+                        check.value = String(p.id);
+                        check.className = 'absolute left-2 top-2 z-10 h-5 w-5 accent-amber-500';
+                        check.checked = true;
+
+                        var thumbWrap = document.createElement('div');
+                        thumbWrap.className = 'pdf-unannotated-thumb';
+                        var img = document.createElement('img');
+                        img.src = p.thumb_url || '';
+                        img.alt = '';
+                        img.loading = 'lazy';
+                        thumbWrap.appendChild(img);
+
+                        cell.appendChild(check);
+                        cell.appendChild(thumbWrap);
+
                         var areaLabel = (p.area_name || '').trim();
-                        cell.innerHTML =
-                            '<input type="checkbox" data-pdf-photo-check value="' + p.id + '" class="absolute left-2 top-2 z-10 h-5 w-5 accent-amber-500" checked />' +
-                            '<div class="aspect-[4/3] w-full overflow-hidden bg-black/40">' +
-                            '<img src="' + p.thumb_url + '" alt="" class="h-full w-full object-cover" loading="lazy" />' +
-                            '</div>' +
-                            (areaLabel ? '<p class="truncate px-2 py-1.5 text-[10px] text-slate-400 sm:text-xs">' + areaLabel + '</p>' : '');
-                        cell.querySelector('[data-pdf-photo-check]').addEventListener('change', pdfUpdateCountLabel);
+                        if (areaLabel) {
+                            var caption = document.createElement('p');
+                            caption.className = 'truncate px-2 py-1.5 text-[10px] text-slate-400 sm:text-xs';
+                            caption.textContent = areaLabel;
+                            cell.appendChild(caption);
+                        }
+
+                        check.addEventListener('change', pdfUpdateCountLabel);
                         pdfGrid.appendChild(cell);
                     });
                     pdfUpdateCountLabel();
@@ -788,10 +885,12 @@
                                     }
                                     return;
                                 }
-                                openPdfUnannotatedDialog(data, exportUrl);
+                                openPdfUnannotatedDialog(data, exportUrl, link.getAttribute('target'));
                             })
                             .catch(function () {
-                                window.location.href = exportUrl;
+                                pdfPendingUrl = exportUrl;
+                                pdfPendingTarget = link.getAttribute('target');
+                                pdfGoToReport();
                             });
                     });
                 });
@@ -800,37 +899,29 @@
                 var pdfContinue = document.getElementById('pdf-unannotated-continue');
                 var pdfDelete = document.getElementById('pdf-unannotated-delete');
                 if (pdfCancel && pdfDialog) {
-                    pdfCancel.addEventListener('click', function () { pdfDialog.close(); pdfPendingUrl = null; });
+                    pdfCancel.addEventListener('click', function () {
+                        pdfDialog.close();
+                        pdfPendingUrl = null;
+                        pdfPendingTarget = null;
+                    });
                 }
                 if (pdfContinue) {
                     pdfContinue.addEventListener('click', function () {
-                        if (pdfPendingUrl) {
-                            var url = pdfPendingUrl;
-                            pdfDialog.close();
-                            window.location.href = url;
-                        }
+                        pdfDialog.close();
+                        pdfGoToReport();
                     });
                 }
                 if (pdfDelete) {
                     pdfDelete.addEventListener('click', function () {
-                        if (!pdfGrid) return;
+                        if (!pdfGrid || !pdfPendingUrl) return;
                         var selected = Array.from(pdfGrid.querySelectorAll('[data-pdf-photo-check]:checked'));
-                        if (!selected.length) {
-                            showAlert('حدد صورة واحدة على الأقل للحذف، أو اضغط «متابعة التقرير».');
-                            return;
-                        }
-                        confirmAction('حذف ' + selected.length + ' صورة محددة؟', function () {
-                            var form = document.getElementById('pdf-unannotated-delete-form');
-                            form.querySelectorAll('input[name="photo_ids[]"]').forEach(function (el) { el.remove(); });
-                            selected.forEach(function (cb) {
-                                var input = document.createElement('input');
-                                input.type = 'hidden';
-                                input.name = 'photo_ids[]';
-                                input.value = cb.value;
-                                form.appendChild(input);
+                        var ids = selected.map(function (cb) { return cb.value; });
+                        if (!ids.length) {
+                            ids = Array.from(pdfGrid.querySelectorAll('[data-pdf-photo-check]')).map(function (cb) {
+                                return cb.value;
                             });
-                            form.submit();
-                        });
+                        }
+                        pdfDeletePhotosAndReport(ids);
                     });
                 }
 

@@ -852,10 +852,8 @@ class InspectionReportPdfGenerator
         $pdf->SetXY($containerX + 10, $headerY + 6);
         $pdf->Cell(45, 5, 'تاريخ الفحص: ' . $reportDate, 0, 1, 'R');
 
-        $pdf->SetDrawColor(226, 232, 240);
-        $pdf->Line($containerX + 4, 27, $containerX + $containerW - 4, 27);
-
         $footerDividerY = $pageH - 24;
+        $pdf->SetDrawColor(226, 232, 240);
         $pdf->Line($containerX + 4, $footerDividerY, $containerX + $containerW - 4, $footerDividerY);
 
         $footerY = $pageH - 21.5;
@@ -932,6 +930,7 @@ class InspectionReportPdfGenerator
     {
         $candidates = array_filter([
             config('report.logo_path'),
+            'images/company-logo_new.png',
             'images/company-logo.png',
             'images/logo.png',
         ]);
@@ -951,13 +950,21 @@ class InspectionReportPdfGenerator
      */
     private function logoBoxMmForPdf(?string $logoPath): array
     {
-        $logoW = max(18.0, min(40.0, (float) config('report.logo_width_mm', 30)));
-        $logoH = 14.0;
+        $maxW = max(28.0, min(55.0, (float) config('report.logo_width_mm', 44)));
+        $targetH = max(14.0, min(26.0, (float) config('report.logo_height_mm', 20)));
+        $logoH = $targetH;
+        $logoW = $maxW;
 
         if ($logoPath && is_readable($logoPath)) {
             $size = @getimagesize($logoPath);
             if ($size && $size[0] > 0 && $size[1] > 0) {
-                $logoH = max(10.0, min(22.0, $logoW * ($size[1] / $size[0])));
+                $ratio = $size[0] / $size[1];
+                $logoH = $targetH;
+                $logoW = min($maxW, $logoH * $ratio);
+                if ($logoW < 28.0) {
+                    $logoW = 28.0;
+                    $logoH = min($targetH, $logoW / $ratio);
+                }
             }
         }
 

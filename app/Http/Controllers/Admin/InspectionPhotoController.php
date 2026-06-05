@@ -657,7 +657,34 @@ class InspectionPhotoController extends Controller
         $house->touch();
         DriveReportSyncService::scheduleSync($house);
 
-        return back()->with('status', 'تم حذف '.$deleted.' صورة بدون تعليم.');
+        $message = 'تم حذف '.$deleted.' صورة بدون تعليم.';
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'ok' => true,
+                'deleted' => $deleted,
+                'message' => $message,
+            ]);
+        }
+
+        $thenExport = $request->input('then_export');
+        if (is_string($thenExport) && $thenExport !== '' && $this->isHouseReportUrl($house, $thenExport)) {
+            return redirect()->to($thenExport)->with('status', $message);
+        }
+
+        return back()->with('status', $message);
+    }
+
+    private function isHouseReportUrl(PropertyHouse $house, string $url): bool
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (! is_string($path) || $path === '') {
+            return false;
+        }
+
+        $allowed = parse_url(route('admin.houses.report', $house), PHP_URL_PATH);
+
+        return is_string($allowed) && $allowed !== '' && $path === $allowed;
     }
 
     public function bulkDestroy(Request $request, PropertyHouse $house, InspectionArea $area): RedirectResponse
