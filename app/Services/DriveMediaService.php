@@ -445,6 +445,51 @@ class DriveMediaService
         return ['ok' => $ok, 'fail' => $fail, 'migrated' => $migrated, 'failures' => $failures];
     }
 
+    /**
+     * رفع صور متعددة إلى Drive بعد إرسال الاستجابة — لا يبطئ حفظ الرفع على السيرفر.
+     *
+     * @param  list<int>  $photoIds
+     */
+    public static function schedulePushPhotos(array $photoIds): void
+    {
+        if (! self::enabled() || $photoIds === []) {
+            return;
+        }
+
+        if (! config('upload.defer_drive_push', true)) {
+            foreach ($photoIds as $id) {
+                $photo = InspectionPhoto::query()->find((int) $id);
+                if ($photo) {
+                    self::pushPhoto($photo);
+                }
+            }
+
+            return;
+        }
+
+        $ids = array_values(array_unique(array_map('intval', $photoIds)));
+
+        dispatch(function () use ($ids): void {
+            foreach ($ids as $id) {
+                $photo = InspectionPhoto::query()->find($id);
+                if (! $photo) {
+                    continue;
+                }
+                try {
+                    self::pushPhoto($photo);
+                } catch (Throwable $e) {
+                    Log::warning('Drive deferred pushPhoto failed', [
+                        'photo_id' => $id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+                if (function_exists('gc_collect_cycles')) {
+                    gc_collect_cycles();
+                }
+            }
+        })->afterResponse();
+    }
+
     public static function pushPhoto(InspectionPhoto $photo): bool
     {
         self::$lastError = null;

@@ -69,6 +69,7 @@
         <div class="flex w-full flex-wrap items-stretch gap-3 md:w-auto md:justify-end">
              <a
                     href="{{ route('admin.houses.report', ['house' => $house, 'inline' => 1, 'v' => $reportV]) }}"
+                    data-pdf-export
                     target="_blank"
                     class="group flex items-center gap-2 rounded-xl bg-emerald-500/20 px-4 py-3 font-bold text-emerald-400 transition hover:bg-emerald-500 hover:text-slate-950"
                 >
@@ -80,6 +81,7 @@
                 </a> 
 
             <a href="{{ route('admin.houses.report', ['house' => $house, 'v' => $reportV]) }}"
+                data-pdf-export
                 class="group flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-6 py-3 font-bold text-slate-950 transition hover:bg-emerald-400 hover:shadow-[0_0_20px_rgba(16,185,129,0.2)] sm:w-auto">
                 <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -353,6 +355,11 @@
                                     data-merge-form
                                 >
                                     @csrf
+                                    @if ($errors->has('merge'))
+                                        <p class="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-300">
+                                            {{ $errors->first('merge') }}
+                                        </p>
+                                    @endif
                                     <input type="file" name="merged_image" accept="image/jpeg" class="hidden" data-merged-image-input />
                                     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                         <div>
@@ -390,7 +397,7 @@
 
                         @php
                             $perPageOptions = [20, 40, 80, 120];
-                            $perPage = (int) request()->query('photos_per_page', 40);
+                            $perPage = (int) request()->query('photos_per_page', session('photos_per_page', 40));
                             if (! in_array($perPage, $perPageOptions, true)) {
                                 $perPage = 40;
                             }
@@ -416,7 +423,15 @@
                                     | الصفحة {{ $photosPaginator->currentPage() }} من {{ $photosPaginator->lastPage() }}
                                 </p>
                                 <div class="flex flex-wrap items-center gap-2">
-                                    
+                                    @if ($photosPaginator->total() > 1)
+                                        <form method="post" action="{{ route('admin.houses.areas.photos.resort', [$house, $area]) }}" class="inline" data-resort-form>
+                                            @csrf
+                                            <button type="submit"
+                                                class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-bold text-slate-300 hover:border-emerald-500 hover:text-emerald-400 transition-colors">
+                                                ترتيب تلقائي بالاسم
+                                            </button>
+                                        </form>
+                                    @endif
 
                                     <form method="GET" class="flex items-center gap-2 text-xs">
                                         @foreach ($scalarQuery as $key => $value)
@@ -435,7 +450,7 @@
                                 </div>
                             </div>
 
-                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4" data-photo-grid>
                                 @foreach ($photosPaginator as $photo)
                                     @php
                                         $imgRoute = \App\Support\PhotoImageUrl::make($house, $photo, (bool) ($photo->composite_path || $photo->drive_composite_file_id));
@@ -521,7 +536,7 @@
                                                 </div>
                                             </div>
 
-                                            <a href="{{ route('admin.houses.photos.edit', [$house, $photo]) }}"
+                                            <a href="{{ route('admin.houses.photos.edit', [$house, $photo, 'return' => request()->fullUrl().'#photo-'.$photo->id]) }}"
                                                 class="w-full rounded-lg bg-emerald-500 py-2 text-center text-xs font-bold text-slate-950 hover:bg-emerald-400">
                                                 {{ $photo->tip_x !== null ? 'تعديل السهم' : 'إضافة سهم' }}
                                             </a>
@@ -608,11 +623,216 @@
 
     @include('admin.houses._notes_modal', ['noteCategories' => $noteCategories])
 
+    <style>
+        #pdf-unannotated-dialog:not([open]) { display: none !important; }
+        #pdf-unannotated-dialog {
+            margin: auto;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            width: min(96vw, 42rem);
+            max-width: 42rem;
+        }
+        #pdf-unannotated-dialog::backdrop {
+            background: rgba(2, 6, 23, 0.8);
+        }
+        #pdf-unannotated-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        @media (min-width: 480px) {
+            #pdf-unannotated-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+    </style>
+    <dialog id="pdf-unannotated-dialog">
+        <div class="overflow-hidden rounded-2xl border border-amber-500/40 bg-slate-900 text-white shadow-2xl">
+            <div class="border-b border-slate-800 px-4 py-3 sm:px-5 sm:py-4">
+                <h3 class="text-base font-bold text-amber-300 sm:text-lg">صور بدون تعليم</h3>
+                <p class="mt-1 text-xs leading-relaxed text-slate-400 sm:text-sm">
+                    حدّد ما تريد حذفه، أو تابع التقرير مع بقاء الصور كما هي.
+                </p>
+            </div>
+            <div class="flex items-center justify-between gap-2 border-b border-slate-800/80 px-4 py-2.5 sm:px-5">
+                <label class="flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-300 sm:text-sm">
+                    <input type="checkbox" id="pdf-unannotated-select-all" class="h-4 w-4 accent-amber-500" checked />
+                    تحديد الكل
+                </label>
+                <span id="pdf-unannotated-count" class="text-xs text-slate-500"></span>
+            </div>
+            <div id="pdf-unannotated-grid" class="grid max-h-[min(65vh,32rem)] gap-3 overflow-y-auto p-4 sm:gap-4 sm:p-5"></div>
+            <div class="flex flex-col gap-2 border-t border-slate-800 p-4 sm:flex-row sm:flex-wrap sm:justify-end sm:p-5">
+                <button type="button" id="pdf-unannotated-delete"
+                    class="w-full rounded-xl bg-red-500/90 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-400 sm:w-auto sm:min-w-[9rem]">
+                    حذف المحدد
+                </button>
+                <button type="button" id="pdf-unannotated-continue"
+                    class="w-full rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 sm:w-auto sm:min-w-[11rem]">
+                    متابعة التقرير
+                </button>
+                <button type="button" id="pdf-unannotated-cancel"
+                    class="w-full rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-slate-400 hover:bg-slate-700 sm:w-auto">
+                    إلغاء
+                </button>
+            </div>
+        </div>
+    </dialog>
+
+    <form id="pdf-unannotated-delete-form" method="post" action="{{ route('admin.houses.photos.unannotated.destroy', $house) }}" class="hidden">
+        @csrf
+        @method('DELETE')
+    </form>
+
     @push('scripts')
+        @php
+            $inspectionUploadConfig = [
+                'maxDim' => (int) config('upload.client_max_dimension', 1400),
+                'jpegQuality' => (float) config('upload.client_jpeg_quality', 0.8),
+                'skipBelowBytes' => (int) config('upload.client_skip_process_below_bytes', 400000),
+                'chunkSize' => (int) config('upload.chunk_size', 30),
+                'parallelRequests' => (int) config('upload.parallel_requests', 2),
+                'processConcurrency' => 6,
+                'maxRetries' => 3,
+            ];
+        @endphp
+        <script>
+            window.INSPECTION_UPLOAD_CONFIG = @json($inspectionUploadConfig);
+        </script>
         <script src="{{ asset('js/inspection-upload.js') }}"></script>
         <script src="{{ asset('js/inspection-merge.js') }}"></script>
         <script>
             document.addEventListener('DOMContentLoaded', () => {
+                var hash = window.location.hash;
+                if (hash && hash.indexOf('#photo-') === 0) {
+                    var target = document.querySelector(hash);
+                    if (target) {
+                        setTimeout(function () {
+                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            target.classList.add('ring-4', 'ring-amber-400/80', 'ring-offset-2', 'ring-offset-slate-950');
+                            setTimeout(function () {
+                                target.classList.remove('ring-4', 'ring-amber-400/80', 'ring-offset-2', 'ring-offset-slate-950');
+                            }, 4500);
+                        }, 150);
+                    }
+                }
+
+                var pdfPendingUrl = null;
+                var pdfDialog = document.getElementById('pdf-unannotated-dialog');
+                var pdfGrid = document.getElementById('pdf-unannotated-grid');
+                var pdfSelectAll = document.getElementById('pdf-unannotated-select-all');
+                var pdfCountLabel = document.getElementById('pdf-unannotated-count');
+                var unannotatedUrl = @json(route('admin.houses.report.unannotated', $house));
+
+                function pdfUpdateCountLabel() {
+                    if (!pdfGrid || !pdfCountLabel) return;
+                    var boxes = pdfGrid.querySelectorAll('[data-pdf-photo-check]');
+                    var checked = pdfGrid.querySelectorAll('[data-pdf-photo-check]:checked').length;
+                    pdfCountLabel.textContent = checked + ' / ' + boxes.length + ' محدد';
+                    if (pdfSelectAll && boxes.length) {
+                        pdfSelectAll.checked = checked === boxes.length;
+                        pdfSelectAll.indeterminate = checked > 0 && checked < boxes.length;
+                    }
+                }
+
+                function openPdfUnannotatedDialog(data, exportUrl) {
+                    pdfPendingUrl = exportUrl;
+                    if (!pdfGrid || !pdfDialog) {
+                        window.location.href = exportUrl;
+                        return;
+                    }
+                    pdfGrid.innerHTML = '';
+                    (data.photos || []).forEach(function (p) {
+                        var cell = document.createElement('label');
+                        cell.className = 'relative flex cursor-pointer flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-md transition hover:border-amber-500/50';
+                        cell.title = (p.area_name || '') + ' #' + p.id;
+                        var areaLabel = (p.area_name || '').trim();
+                        cell.innerHTML =
+                            '<input type="checkbox" data-pdf-photo-check value="' + p.id + '" class="absolute left-2 top-2 z-10 h-5 w-5 accent-amber-500" checked />' +
+                            '<div class="aspect-[4/3] w-full overflow-hidden bg-black/40">' +
+                            '<img src="' + p.thumb_url + '" alt="" class="h-full w-full object-cover" loading="lazy" />' +
+                            '</div>' +
+                            (areaLabel ? '<p class="truncate px-2 py-1.5 text-[10px] text-slate-400 sm:text-xs">' + areaLabel + '</p>' : '');
+                        cell.querySelector('[data-pdf-photo-check]').addEventListener('change', pdfUpdateCountLabel);
+                        pdfGrid.appendChild(cell);
+                    });
+                    pdfUpdateCountLabel();
+                    if (typeof pdfDialog.showModal === 'function') {
+                        pdfDialog.showModal();
+                    } else if (confirm('هناك ' + data.count + ' صورة بدون تعليم. متابعة التصدير؟')) {
+                        window.location.href = exportUrl;
+                    }
+                }
+
+                if (pdfSelectAll) {
+                    pdfSelectAll.addEventListener('change', function () {
+                        if (!pdfGrid) return;
+                        pdfGrid.querySelectorAll('[data-pdf-photo-check]').forEach(function (cb) {
+                            cb.checked = pdfSelectAll.checked;
+                        });
+                        pdfUpdateCountLabel();
+                    });
+                }
+
+                document.querySelectorAll('[data-pdf-export]').forEach(function (link) {
+                    link.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        var exportUrl = link.getAttribute('href');
+                        fetch(unannotatedUrl, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+                            .then(function (res) { return res.json(); })
+                            .then(function (data) {
+                                if (!data.count) {
+                                    if (link.hasAttribute('data-pdf-export') && link.getAttribute('target') === '_blank') {
+                                        window.open(exportUrl, '_blank');
+                                    } else {
+                                        window.location.href = exportUrl;
+                                    }
+                                    return;
+                                }
+                                openPdfUnannotatedDialog(data, exportUrl);
+                            })
+                            .catch(function () {
+                                window.location.href = exportUrl;
+                            });
+                    });
+                });
+
+                var pdfCancel = document.getElementById('pdf-unannotated-cancel');
+                var pdfContinue = document.getElementById('pdf-unannotated-continue');
+                var pdfDelete = document.getElementById('pdf-unannotated-delete');
+                if (pdfCancel && pdfDialog) {
+                    pdfCancel.addEventListener('click', function () { pdfDialog.close(); pdfPendingUrl = null; });
+                }
+                if (pdfContinue) {
+                    pdfContinue.addEventListener('click', function () {
+                        if (pdfPendingUrl) {
+                            var url = pdfPendingUrl;
+                            pdfDialog.close();
+                            window.location.href = url;
+                        }
+                    });
+                }
+                if (pdfDelete) {
+                    pdfDelete.addEventListener('click', function () {
+                        if (!pdfGrid) return;
+                        var selected = Array.from(pdfGrid.querySelectorAll('[data-pdf-photo-check]:checked'));
+                        if (!selected.length) {
+                            showAlert('حدد صورة واحدة على الأقل للحذف، أو اضغط «متابعة التقرير».');
+                            return;
+                        }
+                        confirmAction('حذف ' + selected.length + ' صورة محددة؟', function () {
+                            var form = document.getElementById('pdf-unannotated-delete-form');
+                            form.querySelectorAll('input[name="photo_ids[]"]').forEach(function (el) { el.remove(); });
+                            selected.forEach(function (cb) {
+                                var input = document.createElement('input');
+                                input.type = 'hidden';
+                                input.name = 'photo_ids[]';
+                                input.value = cb.value;
+                                form.appendChild(input);
+                            });
+                            form.submit();
+                        });
+                    });
+                }
 
                 document.querySelectorAll('[data-upload-form]').forEach(form => {
                     if (window.initInspectionUpload) {
@@ -623,6 +843,54 @@
                     if (window.initInspectionMerge) {
                         window.initInspectionMerge(form);
                     }
+                });
+
+                document.querySelectorAll('[data-resort-form]').forEach(form => {
+                    form.addEventListener('submit', function (e) {
+                        e.preventDefault();
+                        const btn = form.querySelector('button[type="submit"]');
+                        if (btn.disabled) return;
+
+                        const originalText = btn.innerHTML;
+                        btn.disabled = true;
+                        btn.innerHTML = 'جاري الترتيب...';
+
+                        const formData = new FormData(form);
+                        fetch(form.action, {
+                            method: 'POST',
+                            body: formData,
+                            headers: {
+                                'X-Requested-With': 'XMLHttpRequest'
+                            }
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.success) {
+                                if (data.changed) {
+                                    window.location.reload();
+                                } else {
+                                    btn.innerHTML = 'بالفعل مرتبين';
+                                    btn.classList.remove('text-slate-300', 'border-slate-700', 'bg-slate-950');
+                                    btn.classList.add('text-amber-400', 'border-amber-500/50', 'bg-amber-950/30');
+                                    
+                                    setTimeout(() => {
+                                        btn.innerHTML = originalText;
+                                        btn.classList.add('text-slate-300', 'border-slate-700', 'bg-slate-950');
+                                        btn.classList.remove('text-amber-400', 'border-amber-500/50', 'bg-amber-950/30');
+                                        btn.disabled = false;
+                                    }, 3000);
+                                }
+                            } else {
+                                btn.innerHTML = originalText;
+                                btn.disabled = false;
+                            }
+                        })
+                        .catch(err => {
+                            console.error(err);
+                            btn.innerHTML = originalText;
+                            btn.disabled = false;
+                        });
+                    });
                 });
             });
 

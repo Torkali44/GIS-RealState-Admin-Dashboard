@@ -1,7 +1,20 @@
 /**
  * معالجة الصور قبل الرفع: تصغير الحجم وتحويل PNG إلى JPEG.
- * الرفع بالتوازي بين الأقسام — كل قسم يرفع مستقلاً بدون reload.
+ * رفع على دفعات — مناسب لاستضافة Namecheap Shared (بدون Terminal).
  */
+function inspectionUploadConfig() {
+    const c = window.INSPECTION_UPLOAD_CONFIG || {};
+    return {
+        maxDim: Number(c.maxDim) || 1400,
+        jpegQuality: Number(c.jpegQuality) || 0.8,
+        skipBelowBytes: Number(c.skipBelowBytes) || 400000,
+        chunkSize: Number(c.chunkSize) || 30,
+        parallelRequests: Number(c.parallelRequests) || 2,
+        processConcurrency: Number(c.processConcurrency) || 6,
+        maxRetries: Number(c.maxRetries) || 3,
+    };
+}
+
 window.initInspectionUpload = function(form) {
     if (form.dataset.uploadBound === '1') return;
     form.dataset.uploadBound = '1';
@@ -55,9 +68,11 @@ window.initInspectionUpload = function(form) {
             statusText.classList.remove('hidden');
             statusText.className = 'text-xs text-emerald-400 mt-2';
 
+            const cfg = inspectionUploadConfig();
+
             // ── 1. معالجة الصور (تصغير + تحويل) ──
-            const maxDim = 1600;
-            const concurrency = 8;
+            const maxDim = cfg.maxDim;
+            const concurrency = cfg.processConcurrency;
             let completed = 0;
             const batchId = (window.crypto && window.crypto.randomUUID)
                 ? window.crypto.randomUUID()
@@ -70,7 +85,7 @@ window.initInspectionUpload = function(form) {
                     const idx = i + offset;
                     try {
                         processedItems[idx] = {
-                            file: await processImage(file, maxDim),
+                            file: await processImage(file, maxDim, cfg),
                             key: buildFileKey(file, idx),
                         };
                     } catch {
@@ -83,9 +98,9 @@ window.initInspectionUpload = function(form) {
 
             // ── 2. رفع الصور بالدفعات ──
             const ready = processedItems.filter(Boolean);
-            const uploadChunkSize = 20;
-            const uploadConcurrency = 4;
-            const maxRetries = 3;
+            const uploadChunkSize = cfg.chunkSize;
+            const uploadConcurrency = cfg.parallelRequests;
+            const maxRetries = cfg.maxRetries;
             let uploaded = 0, skipped = 0, failed = 0;
 
             statusText.innerText = 'بدء رفع الصور...';
@@ -96,10 +111,13 @@ window.initInspectionUpload = function(form) {
                 chunks.push(ready.slice(i, i + uploadChunkSize));
             }
 
-            async function uploadChunk(chunk, attempt = 1) {
+            async function uploadChunk(chunk, isLastChunk, attempt = 1) {
                 const fd = new FormData();
                 fd.append('_token', form.querySelector('input[name="_token"]').value);
                 fd.append('upload_batch_id', batchId);
+                if (isLastChunk) {
+                    fd.append('upload_finalize', '1');
+                }
                 chunk.forEach(item => {
                     fd.append('photos[]', item.file);
                     fd.append('upload_file_keys[]', item.key);
@@ -132,7 +150,7 @@ window.initInspectionUpload = function(form) {
                 while (qIdx < chunks.length) {
                     const ci = qIdx++;
                     try {
-                        const r = await uploadChunk(chunks[ci]);
+                        const r = await uploadChunk(chunks[ci], ci === chunks.length - 1);
                         uploaded += r.created;
                         skipped += r.skipped;
                     } catch {
@@ -247,7 +265,14 @@ window.initInspectionUpload = function(form) {
         }
     }
 
-    async function processImage(file, maxDim) {
+    async function processImage(file, maxDim, cfg) {
+        const quality = cfg?.jpegQuality ?? 0.8;
+        const skipBelow = cfg?.skipBelowBytes ?? 400000;
+        const isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg';
+        if (isJpeg && file.size > 0 && file.size <= skipBelow) {
+            return file;
+        }
+
         return new Promise((resolve, reject) => {
             if (!file.type.startsWith('image/')) return resolve(file);
             const img = new Image();
@@ -259,8 +284,9 @@ window.initInspectionUpload = function(form) {
                     if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
                     else { w = Math.round(w * maxDim / h); h = maxDim; }
                 }
-                const isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg';
-                if (isJpeg && w === img.width && h === img.height) return resolve(file);
+                if (isJpeg && w === img.width && h === img.height && file.size <= skipBelow * 2) {
+                    return resolve(file);
+                }
                 const canvas = document.createElement('canvas');
                 canvas.width = w; canvas.height = h;
                 const ctx = canvas.getContext('2d');
@@ -268,8 +294,9 @@ window.initInspectionUpload = function(form) {
                 ctx.fillRect(0, 0, w, h);
                 ctx.drawImage(img, 0, 0, w, h);
                 canvas.toBlob(blob => {
+                    if (!blob) return reject(new Error('toBlob failed'));
                     resolve(new File([blob], file.name.replace(/\.[^/.]+$/, '') + '.jpg', { type: 'image/jpeg' }));
-                }, 'image/jpeg', 0.85);
+                }, 'image/jpeg', quality);
             };
             img.onerror = reject;
         });

@@ -59,7 +59,7 @@
                 <div class="grid gap-3 sm:grid-cols-2">
                     <div>
                         <label class="mb-1 block text-xs font-medium text-slate-300">التصنيف</label>
-                        <select x-model.number="selectedCategoryId" @change="selectedTemplateId = ''"
+                        <select x-model.number="selectedCategoryId" @change="selectedTemplateId = ''; applyCategoryToAll()"
                             class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none">
                             <option value="0">— اختر تصنيفاً —</option>
                             <template x-for="cat in categories" :key="cat.id">
@@ -219,7 +219,7 @@
                             };
                         }).filter(function (n) { return n.text; })
                         : [];
-                    this.selectedCategoryId = this.categories.length ? this.categories[0].id : 0;
+                    this.selectedCategoryId = 0;
                     this.selectedTemplateId = '';
                     this.manualText = '';
                     this.statusMessage = '';
@@ -255,6 +255,14 @@
                     if (!catId) return 'التصنيف: أخرى';
                     var cat = this.categories.find(function (c) { return Number(c.id) === Number(catId); });
                     return 'التصنيف: ' + (cat ? String(cat.name || '').trim() : 'أخرى');
+                },
+
+                applyCategoryToAll: function () {
+                    if (this.selectedCategoryId <= 0) return;
+                    var catId = this.selectedCategoryId;
+                    this.notes.forEach(function (n) {
+                        n.category_id = catId;
+                    });
                 },
 
                 applyLocation: function (text) {
@@ -325,9 +333,16 @@
                     self.saving = true;
                     self.statusMessage = '';
 
+                    if (self.selectedCategoryId > 0) {
+                        self.applyCategoryToAll();
+                    }
+
                     var body = new FormData();
                     body.append('_token', csrfToken);
                     body.append('_method', 'PATCH');
+                    if (self.selectedCategoryId > 0) {
+                        body.append('apply_category_id', String(self.selectedCategoryId));
+                    }
                     self.notes.forEach(function (n, idx) {
                         body.append('notes[' + idx + '][text]', n.text || '');
                         if (n.category_id) {

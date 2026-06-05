@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\NoteCategoryController;
 use App\Http\Controllers\Admin\NoteTemplateController;
 use App\Http\Controllers\Admin\PropertyHouseController;
 use App\Http\Controllers\Admin\SectionTemplateController;
+use App\Http\Controllers\Admin\SystemMaintenanceController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\HomeController;
 use Illuminate\Support\Facades\Route;
@@ -29,6 +30,8 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::get('/', fn () => redirect()->route('admin.houses.index'));
     Route::post('houses/{house}/report/finalize', [\App\Http\Controllers\Admin\ReportFinalizeController::class, 'finalize'])->name('houses.report.finalize');
     Route::get('houses/{house}/report.pdf', [PropertyHouseController::class, 'report'])->name('houses.report');
+    Route::get('houses/{house}/report/unannotated', [PropertyHouseController::class, 'reportUnannotated'])->name('houses.report.unannotated');
+    Route::delete('houses/{house}/photos/unannotated', [InspectionPhotoController::class, 'destroyUnannotated'])->name('houses.photos.unannotated.destroy');
     Route::get('houses/{house}/report-word', [PropertyHouseController::class, 'reportWord'])->name('houses.report.word');
     Route::resource('houses', PropertyHouseController::class)->only(['index', 'create', 'store', 'show', 'edit', 'update', 'destroy']);
     Route::post('houses/{house}/areas', [InspectionAreaController::class, 'store'])->name('houses.areas.store');
@@ -37,6 +40,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::delete('houses/{house}/areas/{area}', [InspectionAreaController::class, 'destroy'])->name('houses.areas.destroy');
     Route::post('houses/{house}/areas/{area}/photos', [InspectionPhotoController::class, 'store'])->name('houses.areas.photos.store');
     Route::post('houses/{house}/areas/{area}/photos/merge', [InspectionPhotoController::class, 'storeMerged'])->name('houses.areas.photos.merge');
+    Route::post('houses/{house}/areas/{area}/photos/resort', [InspectionPhotoController::class, 'resort'])->name('houses.areas.photos.resort');
     Route::post('houses/{house}/areas/{area}/photos/deduplicate', [InspectionPhotoController::class, 'deduplicate'])->name('houses.areas.photos.deduplicate');
     Route::delete('houses/{house}/areas/{area}/photos/bulk', [InspectionPhotoController::class, 'bulkDestroy'])->name('houses.areas.photos.bulk_destroy');
     Route::get('houses/{house}/photos/{photo}/edit', [InspectionPhotoController::class, 'edit'])->name('houses.photos.edit');
@@ -67,6 +71,9 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::post('houses/{house}/drive/sync', [HouseDriveController::class, 'syncAll'])->name('houses.drive.sync');
     Route::post('houses/{house}/drive/repair-cache', [HouseDriveController::class, 'repairDisplayCache'])->name('houses.drive.repair-cache');
     Route::post('houses/{house}/drive/upload-pdf', [HouseDriveController::class, 'uploadPdf'])->name('houses.drive.upload-pdf');
+
+    Route::get('system/maintenance', [SystemMaintenanceController::class, 'index'])->name('system.maintenance');
+    Route::post('system/maintenance/run', [SystemMaintenanceController::class, 'run'])->name('system.maintenance.run');
 
     Route::get('migrate-db', function (): \Illuminate\Http\Response {
         $lines = [];

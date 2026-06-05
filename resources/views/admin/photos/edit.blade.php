@@ -4,7 +4,13 @@
 
 @section('content')
     <div class="mx-auto max-w-6xl space-y-6">
-        <a href="{{ route('admin.houses.show', $house) }}" class="text-sm text-emerald-400 hover:underline">← العودة لـ
+        @php
+            $returnUrl = request('return');
+            if (! is_string($returnUrl) || $returnUrl === '') {
+                $returnUrl = route('admin.houses.show', $house).'#photo-'.$photo->id;
+            }
+        @endphp
+        <a href="{{ $returnUrl }}" class="text-sm text-emerald-400 hover:underline">← العودة لـ
             {{ $house->title }}</a>
 
         <div>
@@ -148,7 +154,7 @@
 
                 <div class="space-y-4 border-t border-slate-800 pt-6">
                     <div class="flex flex-wrap items-center gap-3">
-                        <button type="submit" name="redirect_to" value="{{ route('admin.houses.show', $house) }}"
+                        <button type="submit" name="redirect_to" value="{{ $returnUrl }}"
                             class="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-8 py-3 font-bold text-slate-950 transition hover:bg-emerald-400">
                             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
@@ -156,7 +162,7 @@
                             <span>حفظ التعديلات</span>
                         </button>
 
-                        <a href="{{ route('admin.houses.show', $house) }}"
+                        <a href="{{ $returnUrl }}"
                             class="rounded-xl border border-slate-700 bg-slate-800/60 px-6 py-3 font-bold text-white hover:bg-slate-800">
                             إلغاء والعودة
                         </a>

@@ -69,6 +69,10 @@
                     class="text-sm font-semibold text-slate-400 hover:text-white transition-colors">الأقسام الجاهزة</a>
                 <a href="{{ route('admin.note-categories.index') }}"
                     class="text-sm font-semibold text-slate-400 hover:text-white transition-colors">الملاحظات الجاهزة</a>
+                @if (config('app.show_server_maintenance'))
+                    <a href="{{ route('admin.system.maintenance') }}"
+                        class="text-sm font-semibold text-amber-400/90 hover:text-amber-300 transition-colors">صيانة السيرفر</a>
+                @endif
                 <a href="{{ route('home') }}"
                     class="text-sm font-semibold text-slate-400 hover:text-white transition-colors">الموقع العام</a>
                 <div class="h-4 w-px bg-slate-800"></div>
@@ -145,7 +149,8 @@
 
     <!-- Custom Popup HTML -->
     <div id="custom-popup"
-        class="fixed inset-0 z-[1] flex items-center justify-center bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-all duration-300 ">
+        style="z-index: 9999;"
+        class="fixed inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-all duration-300 ">
         <div
             class="bg-slate-900 border border-slate-800 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.5)] p-8 max-w-md w-full mx-4 transform scale-95 transition-transform duration-300 relative overflow-hidden text-right">
             <!-- Decorative background elements -->

@@ -46,7 +46,7 @@ final class PdfMerger
 
         // FPDI — الأكثر توافقاً مع Shared Hosting
         if (class_exists('setasign\\Fpdi\\Fpdi')) {
-            self::mergeWithFpdiPairwise($sources, $destinationPath);
+            self::mergeWithFpdiChunked($sources, $destinationPath);
 
             return;
         }
@@ -111,7 +111,98 @@ final class PdfMerger
     }
 
     /**
+     * دمج على دفعات (أسرع بكثير من الدمج ثنائي صفحة بصفحة لعشرات الأقسام).
+     *
      * @param  list<string>  $sources
+     */
+    private static function mergeWithFpdiChunked(array $sources, string $destinationPath): void
+    {
+        $chunkSize = max(2, min(25, (int) config('report.pdf_merge_chunk_size', 12)));
+        $current = array_values($sources);
+        $tmpDir = dirname($destinationPath).DIRECTORY_SEPARATOR.'merge-'.uniqid('', true);
+        @mkdir($tmpDir, 0755, true);
+
+        try {
+            while (count($current) > 1) {
+                $next = [];
+                foreach (array_chunk($current, $chunkSize) as $chunk) {
+                    if (count($chunk) === 1) {
+                        $next[] = $chunk[0];
+                        continue;
+                    }
+
+                    $out = $tmpDir.DIRECTORY_SEPARATOR.'chunk-'.uniqid('', true).'.pdf';
+                    self::mergeManyWithFpdi($chunk, $out);
+                    $next[] = $out;
+                }
+
+                foreach ($current as $path) {
+                    if (! in_array($path, $next, true) && is_file($path)) {
+                        @unlink($path);
+                    }
+                }
+
+                $current = $next;
+
+                if (function_exists('gc_collect_cycles')) {
+                    gc_collect_cycles();
+                }
+            }
+
+            $final = $current[0] ?? null;
+            if ($final === null || ! is_readable($final)) {
+                throw new \RuntimeException('تعذر حفظ التقرير المدمج.');
+            }
+
+            if (! @rename($final, $destinationPath)) {
+                if (! @copy($final, $destinationPath)) {
+                    throw new \RuntimeException('تعذر حفظ التقرير المدمج.');
+                }
+                if ($final !== $destinationPath && is_file($final)) {
+                    @unlink($final);
+                }
+            }
+        } finally {
+            foreach (glob($tmpDir.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+                if (is_file($file) && $file !== $destinationPath) {
+                    @unlink($file);
+                }
+            }
+            @rmdir($tmpDir);
+        }
+    }
+
+    /**
+     * @param  list<string>  $sources
+     */
+    private static function mergeManyWithFpdi(array $sources, string $destinationPath): void
+    {
+        $fpdiClass = 'setasign\\Fpdi\\Fpdi';
+        /** @var object $pdf */
+        $pdf = new $fpdiClass;
+        if (method_exists($pdf, 'setPrintHeader')) {
+            $pdf->setPrintHeader(false);
+            $pdf->setPrintFooter(false);
+        }
+
+        foreach ($sources as $source) {
+            $pageCount = $pdf->setSourceFile($source);
+            for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
+                $templateId = $pdf->importPage($pageNo);
+                $size = $pdf->getTemplateSize($templateId);
+                $orientation = ($size['width'] > $size['height']) ? 'L' : 'P';
+                $pdf->AddPage($orientation, [$size['width'], $size['height']]);
+                $pdf->useTemplate($templateId);
+            }
+        }
+
+        $pdf->Output($destinationPath, 'F');
+        unset($pdf);
+    }
+
+    /**
+     * @param  list<string>  $sources
+     * @deprecated استُبدل بـ mergeWithFpdiChunked — يُبقى للتوافق إن لزم
      */
     private static function mergeWithFpdiPairwise(array $sources, string $destinationPath): void
     {

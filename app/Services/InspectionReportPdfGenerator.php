@@ -7,6 +7,7 @@ use App\Models\InspectionPhoto;
 use App\Models\PropertyHouse;
 use App\Support\PdfMerger;
 use App\Support\RasterImageForTcpdf;
+use App\Support\ReportImageEmbedCache;
 use TCPDF;
 use Throwable;
 
@@ -16,18 +17,25 @@ class InspectionReportPdfGenerator
      * فوق هذا العدد: توليد PDF لكل قسم ثم دمج (يدعم حتى ~500 صورة+)
      * خُفِّض من 90 إلى 30 لتوفير الذاكرة على Shared Hosting
      */
-    private const SECTION_BUILD_PHOTO_THRESHOLD = 200;
+    private function sectionBuildThreshold(): int
+    {
+        return max(30, (int) config('report.section_build_photo_threshold', 80));
+    }
 
-    /**
-     * الحد الأقصى لعرض/ارتفاع الصورة بالبكسل قبل التضمين
-     * قيمة مناسبة لجودة جيدة مع استهلاك ذاكرة منخفض
-     */
-    private const IMAGE_MAX_DIMENSION = 1200;
+    private function imageMaxDimension(): int
+    {
+        return max(800, min(1600, (int) config('report.image_max_dimension', 1100)));
+    }
 
-    /**
-     * جودة JPEG للصور داخل PDF (0-100)
-     */
-    private const JPEG_QUALITY = 65;
+    private function jpegQuality(): int
+    {
+        return max(50, min(92, (int) config('report.jpeg_quality', 65)));
+    }
+
+    private function gcEveryNPhotos(): int
+    {
+        return max(2, (int) config('report.gc_every_n_photos', 4));
+    }
 
     public function renderBinary(PropertyHouse $house): string
     {
@@ -41,6 +49,11 @@ class InspectionReportPdfGenerator
 
     public function renderToFile(PropertyHouse $house, string $absolutePath): void
     {
+        $house->load([
+            'inspectionAreas' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
+            'inspectionAreas.photos' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
+        ]);
+
         @set_time_limit(0);
         @ignore_user_abort(true);
         @ini_set('max_execution_time', '1200');
@@ -64,7 +77,7 @@ class InspectionReportPdfGenerator
         $photoCount = $this->countPhotos($house);
 
         try {
-            if ($photoCount >= self::SECTION_BUILD_PHOTO_THRESHOLD) {
+            if ($photoCount >= $this->sectionBuildThreshold()) {
                 try {
                     $this->renderBySectionsToFile($house, $absolutePath);
                 } catch (Throwable $e) {
@@ -91,6 +104,14 @@ class InspectionReportPdfGenerator
 
     private function countPhotos(PropertyHouse $house): int
     {
+        if ($house->relationLoaded('inspectionAreas')) {
+            return (int) $house->inspectionAreas->sum(
+                fn (InspectionArea $area): int => $area->relationLoaded('photos')
+                    ? $area->photos->count()
+                    : $area->photos()->count()
+            );
+        }
+
         return (int) InspectionPhoto::query()
             ->whereHas('inspectionArea', fn ($q) => $q->where('property_house_id', $house->id))
             ->count();
@@ -108,13 +129,10 @@ class InspectionReportPdfGenerator
         $section = 0;
 
         try {
-            $areas = $house->inspectionAreas()
-                ->orderBy('sort_order')
-                ->orderBy('id')
-                ->get();
+            $areas = $house->inspectionAreas;
 
             foreach ($areas as $area) {
-                if ($area->photos()->count() === 0) {
+                if ($area->photos->isEmpty()) {
                     continue;
                 }
 
@@ -170,9 +188,7 @@ class InspectionReportPdfGenerator
                 $ctx
             );
 
-            $photos = $area->photos()
-                ->orderBy('sort_order')
-                ->get();
+            $photos = $area->photos;
 
             foreach ($photos as $photoIndex => $photo) {
                 try {
@@ -202,8 +218,7 @@ class InspectionReportPdfGenerator
                     );
                 }
 
-                // تنظيف كل 3 صور لتوفير الذاكرة على Shared Hosting
-                if (($photoIndex + 1) % 3 === 0) {
+                if (($photoIndex + 1) % $this->gcEveryNPhotos() === 0) {
                     $this->purgeTempFiles($tempFiles);
                     if (function_exists('gc_collect_cycles')) {
                         gc_collect_cycles();
@@ -233,15 +248,10 @@ class InspectionReportPdfGenerator
         $photoCount = 0;
 
         try {
-            $areas = $house->inspectionAreas()
-                ->orderBy('sort_order')
-                ->orderBy('id')
-                ->get();
+            $areas = $house->inspectionAreas;
 
             foreach ($areas as $area) {
-                $photos = $area->photos()
-                    ->orderBy('sort_order')
-                    ->get();
+                $photos = $area->photos;
 
                 if ($photos->isEmpty()) {
                     continue;
@@ -289,7 +299,7 @@ class InspectionReportPdfGenerator
                     }
 
                     $photoCount++;
-                    if ($photoCount % 5 === 0) {
+                    if ($photoCount % $this->gcEveryNPhotos() === 0) {
                         $this->purgeTempFiles($tempFiles);
                         if (function_exists('gc_collect_cycles')) {
                             gc_collect_cycles();
@@ -423,7 +433,7 @@ class InspectionReportPdfGenerator
         $pdf->SetAutoPageBreak(false);
         $pdf->setRTL(true);
         $pdf->SetCompression(true);
-        $pdf->setJpegQuality(self::JPEG_QUALITY);
+        $pdf->setJpegQuality($this->jpegQuality());
         $pdf->SetFont('aealarabiya', '', 12);
 
         return $pdf;
@@ -479,38 +489,55 @@ class InspectionReportPdfGenerator
      *
      * @param  array<int, string>  $tempFiles
      */
-    private function prepareImageForPdf(string $sourcePath, array &$tempFiles): ?string
+    private function prepareImageForPdf(string $sourcePath, array &$tempFiles, InspectionPhoto $photo): ?string
     {
         if (! is_readable($sourcePath)) {
             return null;
         }
 
+        $maxDim = $this->imageMaxDimension();
+        $quality = $this->jpegQuality();
+
+        return ReportImageEmbedCache::resolve(
+            $photo,
+            $sourcePath,
+            $maxDim,
+            $quality,
+            function (string $path) use ($maxDim, $quality, &$tempFiles): ?string {
+                return $this->buildTempJpegForPdf($path, $maxDim, $quality, $tempFiles);
+            }
+        );
+    }
+
+    /**
+     * @param  array<int, string>  $tempFiles
+     */
+    private function buildTempJpegForPdf(string $sourcePath, int $maxDim, int $quality, array &$tempFiles): ?string
+    {
         $imageInfo = @getimagesize($sourcePath);
         if (! $imageInfo) {
             return null;
         }
 
         [$origW, $origH, $imgType] = $imageInfo;
-        $maxDim = self::IMAGE_MAX_DIMENSION;
 
-        // إذا كانت الأبعاد صغيرة كافية، نعيد المسار مباشرة بدون معالجة
-        if ($origW <= $maxDim && $origH <= $maxDim) {
-            // للصور غير JPEG نحتاج تحويل عبر RasterImageForTcpdf
-            if ($imgType !== IMAGETYPE_JPEG) {
-                try {
-                    [$embedPath, $isTemp] = RasterImageForTcpdf::prepareForEmbedding($sourcePath);
-                    if ($isTemp && $embedPath) {
-                        $tempFiles[] = $embedPath;
-                    }
-                    return $embedPath;
-                } catch (Throwable) {
-                    return null;
-                }
-            }
+        if ($origW <= $maxDim && $origH <= $maxDim && $imgType === IMAGETYPE_JPEG) {
             return $sourcePath;
         }
 
-        // حساب الأبعاد الجديدة مع الحفاظ على النسبة
+        if ($origW <= $maxDim && $origH <= $maxDim && $imgType !== IMAGETYPE_JPEG) {
+            try {
+                [$embedPath, $isTemp] = RasterImageForTcpdf::prepareForEmbedding($sourcePath);
+                if ($isTemp && $embedPath) {
+                    $tempFiles[] = $embedPath;
+                }
+
+                return $embedPath;
+            } catch (Throwable) {
+                return null;
+            }
+        }
+
         $ratio = $origW / $origH;
         if ($origW >= $origH) {
             $newW = $maxDim;
@@ -520,14 +547,13 @@ class InspectionReportPdfGenerator
             $newW = (int) round($maxDim * $ratio);
         }
 
-        // تحقق من توفر GD
         if (! extension_loaded('gd')) {
-            // بدون GD نستخدم RasterImageForTcpdf كـ fallback
             try {
                 [$embedPath, $isTemp] = RasterImageForTcpdf::prepareForEmbedding($sourcePath);
                 if ($isTemp && $embedPath) {
                     $tempFiles[] = $embedPath;
                 }
+
                 return $embedPath;
             } catch (Throwable) {
                 return null;
@@ -535,22 +561,21 @@ class InspectionReportPdfGenerator
         }
 
         try {
-            // تحميل الصورة حسب نوعها
             $srcImg = match ($imgType) {
                 IMAGETYPE_JPEG => @imagecreatefromjpeg($sourcePath),
-                IMAGETYPE_PNG  => @imagecreatefrompng($sourcePath),
+                IMAGETYPE_PNG => @imagecreatefrompng($sourcePath),
                 IMAGETYPE_WEBP => function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($sourcePath) : false,
-                IMAGETYPE_GIF  => @imagecreatefromgif($sourcePath),
-                default        => false,
+                IMAGETYPE_GIF => @imagecreatefromgif($sourcePath),
+                default => false,
             };
 
             if (! $srcImg) {
-                // فشل تحميل الصورة — نحاول RasterImageForTcpdf
                 try {
                     [$embedPath, $isTemp] = RasterImageForTcpdf::prepareForEmbedding($sourcePath);
                     if ($isTemp && $embedPath) {
                         $tempFiles[] = $embedPath;
                     }
+
                     return $embedPath;
                 } catch (Throwable) {
                     return null;
@@ -560,10 +585,10 @@ class InspectionReportPdfGenerator
             $dstImg = imagecreatetruecolor($newW, $newH);
             if (! $dstImg) {
                 imagedestroy($srcImg);
+
                 return null;
             }
 
-            // للصور ذات الشفافية
             if (in_array($imgType, [IMAGETYPE_PNG, IMAGETYPE_GIF], true)) {
                 imagealphablending($dstImg, false);
                 imagesavealpha($dstImg, true);
@@ -576,13 +601,13 @@ class InspectionReportPdfGenerator
             imagecopyresampled($dstImg, $srcImg, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
             imagedestroy($srcImg);
 
-            // حفظ كـ JPEG في ملف مؤقت
             $tmpPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'pdf_img_'.uniqid('', true).'.jpg';
-            $saved = imagejpeg($dstImg, $tmpPath, self::JPEG_QUALITY);
+            $saved = imagejpeg($dstImg, $tmpPath, $quality);
             imagedestroy($dstImg);
 
             if ($saved && is_readable($tmpPath)) {
                 $tempFiles[] = $tmpPath;
+
                 return $tmpPath;
             }
 
@@ -615,7 +640,7 @@ class InspectionReportPdfGenerator
         $pdf->SetTextColor(15, 23, 42);
         $pdf->SetFont('aealarabiya', 'B', 44);
         $pdf->SetY(125);
-        $pdf->Cell(0, 22, $name, 0, 1, 'C');
+        $pdf->MultiCell(0, 0, $name, 0, 'C', false, 1);
     }
 
     private function addPhotoPage(
@@ -641,22 +666,30 @@ class InspectionReportPdfGenerator
         $contentX = $containerX + 6.0;
 
         $areaName = trim((string) $area->name);
-        $contentTop = $areaName !== '' ? 52.0 : 44.0;
+        $contentTop = 44.0;
 
         if ($areaName !== '') {
             $pdf->setRTL(true);
             $pdf->SetTextColor(185, 28, 28);
             $pdf->SetFont('aealarabiya', 'B', 20);
             $pdf->SetXY($contentX, 30);
-            $pdf->Cell($contentW, 10, $this->wrapMixedTextForRtl($areaName), 0, 1, 'C');
+            
+            // Use MultiCell to wrap the long area name onto multiple lines if it exceeds width
+            $pdf->MultiCell($contentW, 0, $this->wrapMixedTextForRtl($areaName), 0, 'C', false, 1);
+            
+            // Get the actual Y coordinate at the bottom of the rendered area name block
+            $currentY = $pdf->GetY();
 
             // Draw a decorative line under the section name
             $pdf->SetDrawColor(185, 28, 28);
             $pdf->SetLineWidth(0.5);
-            $lineY = 43;
+            $lineY = max(43.0, $currentY + 2.0);
             $lineW = min(mb_strlen($areaName) * 5, $contentW * 0.6);
             $lineX = $contentX + ($contentW - $lineW) / 2;
             $pdf->Line($lineX, $lineY, $lineX + $lineW, $lineY);
+
+            // Set contentTop below the line dynamically
+            $contentTop = $lineY + 9.0;
         }
 
         $desc = $this->photoDescription($photo);
@@ -673,7 +706,7 @@ class InspectionReportPdfGenerator
         if ($path && is_readable($path)) {
             try {
                 // استخدام الدالة الجديدة للضغط والتصغير
-                $embedPath = $this->prepareImageForPdf($path, $tempFiles);
+                $embedPath = $this->prepareImageForPdf($path, $tempFiles, $photo);
             } catch (Throwable) {
                 $embedPath = null;
             }
@@ -779,12 +812,31 @@ class InspectionReportPdfGenerator
 
         $headerX = $containerX + 6.0;
         $headerY = $containerY + 4.0;
-        $logoW = 22.0;
+        $embedLogoPath = $this->prepareLogoPathForPdf($logoPath);
+        $logoBox = $this->logoBoxMmForPdf($embedLogoPath ?? $logoPath);
 
-        if ($logoPath && is_readable($logoPath)) {
+        if ($embedLogoPath && is_readable($embedLogoPath)) {
             try {
                 $pdf->setRTL(false);
-                $pdf->Image($logoPath, $headerX, $headerY, $logoW, 14, '', '', '', false, 96, '', false, false, 0, false, false, false);
+                $pdf->Image(
+                    $embedLogoPath,
+                    $headerX,
+                    $headerY,
+                    $logoBox['w'],
+                    $logoBox['h'],
+                    '',
+                    '',
+                    '',
+                    false,
+                    (int) config('report.logo_embed_dpi', 200),
+                    '',
+                    false,
+                    false,
+                    0,
+                    false,
+                    false,
+                    false
+                );
                 $pdf->setRTL(true);
             } catch (Throwable) {
             }
@@ -892,6 +944,98 @@ class InspectionReportPdfGenerator
         }
 
         return null;
+    }
+
+    /**
+     * @return array{w: float, h: float}
+     */
+    private function logoBoxMmForPdf(?string $logoPath): array
+    {
+        $logoW = max(18.0, min(40.0, (float) config('report.logo_width_mm', 30)));
+        $logoH = 14.0;
+
+        if ($logoPath && is_readable($logoPath)) {
+            $size = @getimagesize($logoPath);
+            if ($size && $size[0] > 0 && $size[1] > 0) {
+                $logoH = max(10.0, min(22.0, $logoW * ($size[1] / $size[0])));
+            }
+        }
+
+        return ['w' => $logoW, 'h' => $logoH];
+    }
+
+    /**
+     * نسخة أوضح للشعار داخل PDF (تكبير PNG الصغير قبل التضمين).
+     */
+    private function prepareLogoPathForPdf(?string $logoPath): ?string
+    {
+        if ($logoPath === null || ! is_readable($logoPath)) {
+            return null;
+        }
+
+        $info = @getimagesize($logoPath);
+        if (! $info) {
+            return $logoPath;
+        }
+
+        [$wPx, $hPx, $type] = $info;
+        $minW = max(200, (int) config('report.logo_embed_min_width', 420));
+
+        if ($wPx >= $minW || ! extension_loaded('gd')) {
+            return $logoPath;
+        }
+
+        $scale = $minW / max(1, $wPx);
+        $newW = (int) round($wPx * $scale);
+        $newH = (int) round($hPx * $scale);
+
+        $cacheDir = storage_path('app/reports/logo-cache');
+        if (! is_dir($cacheDir)) {
+            @mkdir($cacheDir, 0755, true);
+        }
+
+        $cachePath = $cacheDir.DIRECTORY_SEPARATOR.'logo-'.md5($logoPath.'|'.filemtime($logoPath).'|'.$newW).'.png';
+        if (is_file($cachePath) && filesize($cachePath) > 100) {
+            return $cachePath;
+        }
+
+        try {
+            $src = match ($type) {
+                IMAGETYPE_PNG => @imagecreatefrompng($logoPath),
+                IMAGETYPE_JPEG => @imagecreatefromjpeg($logoPath),
+                IMAGETYPE_WEBP => function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($logoPath) : false,
+                default => false,
+            };
+
+            if (! $src) {
+                return $logoPath;
+            }
+
+            $dst = imagecreatetruecolor($newW, $newH);
+            if (! $dst) {
+                imagedestroy($src);
+
+                return $logoPath;
+            }
+
+            imagealphablending($dst, false);
+            imagesavealpha($dst, true);
+            $transparent = imagecolorallocatealpha($dst, 255, 255, 255, 127);
+            if ($transparent !== false) {
+                imagefilledrectangle($dst, 0, 0, $newW, $newH, $transparent);
+            }
+            imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $wPx, $hPx);
+            imagedestroy($src);
+
+            imagealphablending($dst, true);
+            imagesavealpha($dst, true);
+            imagepng($dst, $cachePath, 6);
+            imagedestroy($dst);
+
+            return is_file($cachePath) ? $cachePath : $logoPath;
+        } catch (Throwable) {
+            return $logoPath;
+        }
     }
 
     /**

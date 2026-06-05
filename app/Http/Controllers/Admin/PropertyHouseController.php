@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\NoteCategory;
 use App\Models\PropertyHouse;
+use App\Support\PhotoImageUrl;
 use App\Services\InspectionReportPdfGenerator;
 use App\Services\InspectionReportWordGenerator;
 use App\Services\DriveMediaService;
@@ -12,6 +13,7 @@ use App\Services\DriveReportSyncService;
 use App\Services\GoogleDriveService;
 use App\Support\InspectionReportCache;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -69,21 +71,28 @@ class PropertyHouseController extends Controller
             ->with('status', 'تم إنشاء المنزل.');
     }
 
-    public function show(PropertyHouse $house): View
+    public function show(Request $request, PropertyHouse $house): View
     {
+        if ($request->has('photos_per_page')) {
+            $perPage = (int) $request->query('photos_per_page');
+            if (in_array($perPage, [20, 40, 80, 120], true)) {
+                $request->session()->put('photos_per_page', $perPage);
+            }
+        }
+
         // Only load areas (photos are paginated per-area in the view, no need to eager-load all).
         $house->load([
             'inspectionAreas' => function ($q) {
                 $q->withCount('photos')
-                  ->orderBy('sort_order')
-                  ->orderBy('id');
+                    ->orderBy('sort_order')
+                    ->orderBy('id');
             },
         ]);
 
         $noteCategories = NoteCategory::query()
             ->orderBy('sort_order')
             ->orderBy('id')
-            ->with(['templates' => fn ($q) => $q->orderBy('sort_order')->orderBy('id')])
+            ->with(['templates' => fn($q) => $q->orderBy('sort_order')->orderBy('id')])
             ->get(['id', 'name', 'sort_order']);
 
         $sectionTemplates = \App\Models\SectionTemplate::ordered()->get(['id', 'name']);
@@ -92,18 +101,15 @@ class PropertyHouseController extends Controller
         $driveConfigured = GoogleDriveService::isConfigured();
         $driveOAuthNeeded = GoogleDriveService::authMode() === 'oauth'
             && GoogleDriveService::oauthClientConfigured()
-            && ! GoogleDriveService::isOAuthConnected();
+            && !GoogleDriveService::isOAuthConnected();
 
         $pendingDrivePhotos = 0;
         if ($driveConfigured) {
-            $house->loadMissing('inspectionAreas.photos');
-            foreach ($house->inspectionAreas as $area) {
-                foreach ($area->photos as $photo) {
-                    if (DriveMediaService::needsDriveUpload($photo)) {
-                        $pendingDrivePhotos++;
-                    }
-                }
-            }
+            $pendingDrivePhotos = (int) \App\Models\InspectionPhoto::query()
+                ->whereHas('inspectionArea', fn ($q) => $q->where('property_house_id', $house->id))
+                ->whereNull('drive_file_id')
+                ->whereNotNull('original_path')
+                ->count();
         }
 
         return view('admin.houses.show', compact(
@@ -160,6 +166,33 @@ class PropertyHouseController extends Controller
             ->with('status', 'تم حذف المنزل وجميع المرفقات.');
     }
 
+    public function reportUnannotated(PropertyHouse $house): JsonResponse
+    {
+        $house->load([
+            'inspectionAreas' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
+            'inspectionAreas.photos' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
+        ]);
+
+        $photos = [];
+        foreach ($house->inspectionAreas as $area) {
+            foreach ($area->photos as $photo) {
+                if ($photo->hasUserEdits()) {
+                    continue;
+                }
+                $photos[] = [
+                    'id' => (int) $photo->id,
+                    'area_name' => trim((string) $area->name) ?: ('قسم #'.$area->id),
+                    'thumb_url' => PhotoImageUrl::make($house, $photo, false),
+                ];
+            }
+        }
+
+        return response()->json([
+            'count' => count($photos),
+            'photos' => $photos,
+        ]);
+    }
+
     public function report(
         Request $request,
         PropertyHouse $house,
@@ -170,7 +203,7 @@ class PropertyHouseController extends Controller
             return $this->reportWord($house, $wordGenerator);
         }
 
-        $filename = 'inspection-'.$house->id.'.pdf';
+        $filename = 'inspection-' . $house->id . '.pdf';
         $disk = Storage::disk('public');
 
         @set_time_limit(0);
@@ -183,17 +216,18 @@ class PropertyHouseController extends Controller
         // ── Cache key يعتمد على updated_at للمنزل والصور ──
         // أي تعديل على صورة أو قسم يغير updated_at فيتغير الـ cache key تلقائياً
         $cachePath = InspectionReportCache::relativePath($house);
-        $useCache = ! $request->boolean('refresh') && InspectionReportCache::exists($house);
+        $useCache = !$request->boolean('refresh') && InspectionReportCache::exists($house);
 
         // ── لو مفيش cache: اعرض صفحة الانتظار أولاً ثم أعد التوجيه ──
-        if (! $useCache && ! $request->boolean('_generating')) {
+        if (!$useCache && !$request->boolean('_generating')) {
             $redirectUrl = $request->fullUrlWithQuery(['_generating' => '1']);
             $photoText = $photoCount > 0 ? " ({$photoCount} صورة)" : '';
+            $waitSec = min(12, max(3, (int) ceil($photoCount / 35)));
             return response('<!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="3;url=' . $redirectUrl . '">
+<meta http-equiv="refresh" content="' . $waitSec . ';url=' . $redirectUrl . '">
 <title>جاري إنشاء التقرير...</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -218,14 +252,14 @@ class PropertyHouseController extends Controller
         }
 
         try {
-            if (! $disk->exists('reports')) {
+            if (!$disk->exists('reports')) {
                 $disk->makeDirectory('reports');
             }
 
+            $freshlyBuilt = false;
             if ($useCache) {
                 $absolutePath = $disk->path($cachePath);
             } else {
-                // امسح الـ cache القديم للمنزل ده
                 InspectionReportCache::forget($house);
 
                 $tmpDir = storage_path('app/reports/tmp');
@@ -234,9 +268,10 @@ class PropertyHouseController extends Controller
                 }
                 $absolutePath = $tmpDir.DIRECTORY_SEPARATOR.'download-'.$house->id.'-'.uniqid('', true).'.pdf';
                 $generator->renderToFile($house, $absolutePath);
+                $freshlyBuilt = true;
 
                 if (is_readable($absolutePath)) {
-                    $stream = fopen($absolutePath, 'r');
+                    $stream = fopen($absolutePath, 'rb');
                     if ($stream !== false) {
                         $disk->put($cachePath, $stream);
                         fclose($stream);
@@ -244,27 +279,25 @@ class PropertyHouseController extends Controller
                 }
             }
 
-            if (! is_readable($absolutePath)) {
+            if (!is_readable($absolutePath)) {
                 throw new \RuntimeException('ملف PDF غير موجود بعد التوليد.');
-            }
-
-            if (DriveMediaService::enabled()) {
-                try {
-                    GoogleDriveService::uploadPdfReport($house, $absolutePath);
-                } catch (Throwable $driveEx) {
-                    Log::warning('Drive PDF upload failed', ['house_id' => $house->id, 'error' => $driveEx->getMessage()]);
-                }
             }
 
             $disposition = $request->query('inline') ? 'inline' : 'attachment';
 
-            return response()->file($absolutePath, [
+            $response = response()->file($absolutePath, [
                 'Content-Type' => 'application/pdf',
-                'Content-Disposition' => $disposition.'; filename="'.$filename.'"',
+                'Content-Disposition' => $disposition . '; filename="' . $filename . '"',
                 'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
                 'Pragma' => 'no-cache',
                 'Expires' => '0',
-            ])->deleteFileAfterSend(str_contains($absolutePath, storage_path('app'.DIRECTORY_SEPARATOR.'reports'.DIRECTORY_SEPARATOR.'tmp')));
+            ])->deleteFileAfterSend(str_contains($absolutePath, storage_path('app' . DIRECTORY_SEPARATOR . 'reports' . DIRECTORY_SEPARATOR . 'tmp')));
+
+            if ($freshlyBuilt && DriveMediaService::enabled()) {
+                DriveReportSyncService::scheduleSync($house);
+            }
+
+            return $response;
         } catch (Throwable $e) {
             Log::error('PDF report generation failed', [
                 'house_id' => $house->id,
@@ -276,13 +309,13 @@ class PropertyHouseController extends Controller
 
             return redirect()
                 ->route('admin.houses.show', $house)
-                ->with('error', 'تعذر إنشاء التقرير ('.$photoCount.' صورة). جرّب مرة أخرى بعد دقائق.');
+                ->with('error', 'تعذر إنشاء التقرير (' . $photoCount . ' صورة). جرّب مرة أخرى بعد دقائق.');
         }
     }
 
     public function reportWord(PropertyHouse $house, InspectionReportWordGenerator $generator): Response
     {
-        $filename = 'inspection-notes-'.$house->id.'.doc';
+        $filename = 'inspection-notes-' . $house->id . '.doc';
         $html = $generator->renderHtml($house);
 
         if (DriveMediaService::enabled()) {
@@ -295,7 +328,7 @@ class PropertyHouseController extends Controller
 
         return response($html, 200, [
             'Content-Type' => 'application/msword; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
         ]);
     }
 }

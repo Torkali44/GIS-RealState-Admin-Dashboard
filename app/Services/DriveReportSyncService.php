@@ -65,35 +65,55 @@ class DriveReportSyncService
     public static function syncPdf(PropertyHouse $house): void
     {
         $house = $house->fresh() ?? $house;
-        InspectionReportCache::forget($house);
+        $disk = Storage::disk('public');
 
-        $tmpDir = storage_path('app/reports/tmp');
-        if (! is_dir($tmpDir)) {
-            mkdir($tmpDir, 0755, true);
+        if (! $disk->exists('reports')) {
+            $disk->makeDirectory('reports');
         }
 
-        $absolutePath = $tmpDir.DIRECTORY_SEPARATOR.'drive-sync-'.$house->id.'-'.uniqid('', true).'.pdf';
+        $cachePath = InspectionReportCache::relativePath($house);
+        $absolutePath = null;
+        $generated = false;
 
-        try {
-            app(InspectionReportPdfGenerator::class)->renderToFile($house, $absolutePath);
-
-            if (! is_readable($absolutePath)) {
-                return;
-            }
-
-            GoogleDriveService::uploadPdfReport($house->fresh(), $absolutePath);
-
-            $cachePath = InspectionReportCache::relativePath($house->fresh());
-            $disk = Storage::disk('public');
-            if (! $disk->exists('reports')) {
-                $disk->makeDirectory('reports');
-            }
-            $disk->put($cachePath, file_get_contents($absolutePath) ?: '');
-        } finally {
-            if (is_file($absolutePath)) {
-                @unlink($absolutePath);
-            }
+        if (InspectionReportCache::exists($house)) {
+            $absolutePath = $disk->path($cachePath);
         }
+
+        if ($absolutePath === null || ! is_readable($absolutePath)) {
+            $tmpDir = storage_path('app/reports/tmp');
+            if (! is_dir($tmpDir)) {
+                mkdir($tmpDir, 0755, true);
+            }
+
+            $absolutePath = $tmpDir.DIRECTORY_SEPARATOR.'drive-sync-'.$house->id.'-'.uniqid('', true).'.pdf';
+            $generated = true;
+
+            try {
+                app(InspectionReportPdfGenerator::class)->renderToFile($house, $absolutePath);
+
+                if (! is_readable($absolutePath)) {
+                    return;
+                }
+
+                $stream = fopen($absolutePath, 'rb');
+                if ($stream !== false) {
+                    $disk->put($cachePath, $stream);
+                    fclose($stream);
+                }
+            } finally {
+                if ($generated && is_file($absolutePath)) {
+                    @unlink($absolutePath);
+                }
+            }
+
+            $absolutePath = $disk->path($cachePath);
+        }
+
+        if (! is_readable($absolutePath)) {
+            return;
+        }
+
+        GoogleDriveService::uploadPdfReport($house, $absolutePath);
     }
 
     public static function syncWord(PropertyHouse $house): void

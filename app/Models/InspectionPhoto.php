@@ -117,6 +117,78 @@ class InspectionPhoto extends Model
                      ->orderBy('original_filename', 'ASC');
     }
 
+    /**
+     * Compare two filenames according to specific rules:
+     * 1. Simple numbers first (e.g. 1.jpg, 2.jpg)
+     * 2. WhatsApp images (e.g. WhatsApp Image 2026-05-23 at 16.56.43 (1).jpeg) by date-time and duplicate suffix
+     * 3. Other names natural sorted
+     */
+    public static function compareFilenames(?string $filenameA, ?string $filenameB): int
+    {
+        $filenameA = $filenameA ?? '';
+        $filenameB = $filenameB ?? '';
+
+        $nameA = pathinfo($filenameA, PATHINFO_FILENAME);
+        $nameB = pathinfo($filenameB, PATHINFO_FILENAME);
+
+        $isNumA = is_numeric($nameA);
+        $isNumB = is_numeric($nameB);
+
+        // Group 1: Purely numeric names
+        if ($isNumA && !$isNumB) {
+            return -1;
+        }
+        if (!$isNumA && $isNumB) {
+            return 1;
+        }
+        if ($isNumA && $isNumB) {
+            $valA = floatval($nameA);
+            $valB = floatval($nameB);
+            if ($valA !== $valB) {
+                return $valA <=> $valB;
+            }
+            return strnatcasecmp($nameA, $nameB);
+        }
+
+        // WhatsApp name regex pattern:
+        // Matches: WhatsApp Image 2026-05-23 at 16.56.43
+        // Matches: WhatsApp Image 2026-05-23 at 16.56.43 (1)
+        $waPattern = '/^WhatsApp Image (\d{4}-\d{2}-\d{2}) at (\d{2})\.(\d{2})\.(\d{2})(?:\s*\((\d+)\))?$/i';
+
+        $isWaA = preg_match($waPattern, $nameA, $matchesA);
+        $isWaB = preg_match($waPattern, $nameB, $matchesB);
+
+        // Group 2: WhatsApp images
+        if ($isWaA && !$isWaB) {
+            return -1;
+        }
+        if (!$isWaA && $isWaB) {
+            return 1;
+        }
+        if ($isWaA && $isWaB) {
+            // Compare datetime
+            $dateTimeA = $matchesA[1] . ' ' . $matchesA[2] . ':' . $matchesA[3] . ':' . $matchesA[4];
+            $dateTimeB = $matchesB[1] . ' ' . $matchesB[2] . ':' . $matchesB[3] . ':' . $matchesB[4];
+
+            $dtDiff = strcmp($dateTimeA, $dateTimeB);
+            if ($dtDiff !== 0) {
+                return $dtDiff;
+            }
+
+            // Compare duplicate suffix: (1), (2), etc.
+            $suffixA = isset($matchesA[5]) ? intval($matchesA[5]) : 0;
+            $suffixB = isset($matchesB[5]) ? intval($matchesB[5]) : 0;
+
+            if ($suffixA !== $suffixB) {
+                return $suffixA <=> $suffixB;
+            }
+            return strnatcasecmp($nameA, $nameB);
+        }
+
+        // Group 3: Other names
+        return strnatcasecmp($nameA, $nameB);
+    }
+
     public function inspectionArea(): BelongsTo
     {
         return $this->belongsTo(InspectionArea::class);

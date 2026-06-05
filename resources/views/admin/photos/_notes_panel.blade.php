@@ -150,6 +150,14 @@
                     return { key: key, notes: groups[key] };
                 });
             },
+
+            applyCategoryToAll() {
+                if (this.selectedCategoryId <= 0) return;
+                var catId = this.selectedCategoryId;
+                this.notes.forEach(function (n) {
+                    n.category_id = catId;
+                });
+            },
         };
     };
 </script>
@@ -177,7 +185,7 @@
     <div class="grid gap-3 sm:grid-cols-2">
         <div class="min-w-0">
             <label class="mb-1 block text-xs font-medium text-slate-300">التصنيف</label>
-            <select x-model.number="selectedCategoryId" @change="selectedTemplateId = ''"
+            <select x-model.number="selectedCategoryId" @change="selectedTemplateId = ''; applyCategoryToAll()"
                 class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none">
                 <option value="0">— اختر تصنيفاً —</option>
                 <template x-for="cat in categories" :key="cat.id">
@@ -274,6 +282,8 @@
             لم تُضَف أي ملاحظة لهذه الصورة بعد.
         </p>
     </div>
+
+    <input type="hidden" name="apply_category_id" :value="selectedCategoryId > 0 ? selectedCategoryId : ''">
 
     {{-- Hidden inputs that get submitted with the form --}}
     <template x-for="(note, idx) in notes" :key="'in-' + idx">

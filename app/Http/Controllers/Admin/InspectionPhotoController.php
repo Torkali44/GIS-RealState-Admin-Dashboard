@@ -20,6 +20,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\Response;
@@ -40,6 +42,7 @@ class InspectionPhotoController extends Controller
             'upload_batch_id' => ['nullable', 'string', 'max:100'],
             'upload_file_keys' => ['nullable', 'array'],
             'upload_file_keys.*' => ['nullable', 'string', 'max:500'],
+            'upload_finalize' => ['sometimes', 'boolean'],
         ]);
 
         $maxSort = (int) $area->photos()->max('sort_order');
@@ -47,8 +50,11 @@ class InspectionPhotoController extends Controller
         $created = 0;
         $skipped = 0;
         $driveFailed = 0;
+        $driveQueued = 0;
         $batchId = $request->input('upload_batch_id');
         $fileKeys = $request->input('upload_file_keys', []);
+        $finalize = $request->boolean('upload_finalize');
+        $createdPhotoIds = [];
 
         $uploadedFiles = $request->file('photos', []);
         $pairedFiles = [];
@@ -62,74 +68,103 @@ class InspectionPhotoController extends Controller
             }
         }
 
-        // Natural sort by filename before processing so initial sort_order matches natural filename sorting
+        // Custom sort: simple numbers, WhatsApp images (by date-time & suffix), then other names
         usort($pairedFiles, function ($a, $b) {
-            return strnatcasecmp($a['filename'], $b['filename']);
+            return \App\Models\InspectionPhoto::compareFilenames($a['filename'], $b['filename']);
         });
 
-        foreach ($pairedFiles as $pair) {
-            $index = $pair['index'];
-            $file = $pair['file'];
-            if (!$file) {
-                continue;
-            }
+        DB::transaction(function () use (
+            $pairedFiles,
+            $fileKeys,
+            $batchId,
+            $area,
+            $house,
+            $disk,
+            &$maxSort,
+            &$created,
+            &$skipped,
+            &$createdPhotoIds
+        ): void {
+            foreach ($pairedFiles as $pair) {
+                $index = $pair['index'];
+                $file = $pair['file'];
+                if (! $file) {
+                    continue;
+                }
 
-            $fileKey = $fileKeys[$index] ?? null;
-            if (
-                $batchId && $fileKey && $area->photos()
-                    ->where('upload_batch_id', $batchId)
-                    ->where('upload_file_key', $fileKey)
-                    ->exists()
-            ) {
-                $skipped++;
-                continue;
-            }
+                $fileKey = $fileKeys[$index] ?? null;
+                if (
+                    $batchId && $fileKey && $area->photos()
+                        ->where('upload_batch_id', $batchId)
+                        ->where('upload_file_key', $fileKey)
+                        ->exists()
+                ) {
+                    $skipped++;
 
-            // Save file
-            $path = $file->store("inspections/{$house->id}", 'public');
+                    continue;
+                }
 
-            // Skip extra conversion for JPEGs to speed up large batch uploads.
-            if (!in_array(strtolower((string) $file->getClientOriginalExtension()), ['jpg', 'jpeg'], true)) {
-                $converted = RasterImageForTcpdf::convertStoredFileToJpegIfNeeded($disk, $path);
-                if ($converted !== null) {
-                    $path = $converted;
+                $path = $file->store("inspections/{$house->id}", 'public');
+
+                if (! in_array(strtolower((string) $file->getClientOriginalExtension()), ['jpg', 'jpeg'], true)) {
+                    $converted = RasterImageForTcpdf::convertStoredFileToJpegIfNeeded($disk, $path);
+                    if ($converted !== null) {
+                        $path = $converted;
+                    }
+                }
+
+                $this->copyUploadedToPublicStorage($path, $house);
+
+                $maxSort++;
+                try {
+                    $photo = InspectionPhoto::create([
+                        'inspection_area_id' => $area->id,
+                        'original_path' => $path,
+                        'original_filename' => $file->getClientOriginalName(),
+                        'sort_order' => $maxSort,
+                        'upload_batch_id' => $batchId,
+                        'upload_file_key' => $fileKey,
+                    ]);
+                    $createdPhotoIds[] = (int) $photo->id;
+                    $created++;
+                } catch (QueryException $e) {
+                    if ((string) $e->getCode() !== '23000') {
+                        throw $e;
+                    }
+                    if ($disk->exists($path)) {
+                        $disk->delete($path);
+                    }
+                    $skipped++;
                 }
             }
+        });
 
-            $this->copyUploadedToPublicStorage($path, $house);
-
-            $maxSort++;
-            try {
-                $photo = InspectionPhoto::create([
-                    'inspection_area_id' => $area->id,
-                    'original_path' => $path,
-                    'original_filename' => $file->getClientOriginalName(),
-                    'sort_order' => $maxSort,
-                    'upload_batch_id' => $batchId,
-                    'upload_file_key' => $fileKey,
-                ]);
-                if (DriveMediaService::enabled() && ! DriveMediaService::pushPhoto($photo)) {
-                    $driveFailed++;
+        if (DriveMediaService::enabled() && $createdPhotoIds !== []) {
+            if (config('upload.defer_drive_push', true)) {
+                DriveMediaService::schedulePushPhotos($createdPhotoIds);
+                $driveQueued = count($createdPhotoIds);
+            } else {
+                foreach ($createdPhotoIds as $photoId) {
+                    $photo = InspectionPhoto::query()->find($photoId);
+                    if ($photo && ! DriveMediaService::pushPhoto($photo)) {
+                        $driveFailed++;
+                    }
                 }
-                $created++;
-            } catch (QueryException $e) {
-                if ((string) $e->getCode() !== '23000') {
-                    throw $e;
-                }
-                if ($disk->exists($path)) {
-                    $disk->delete($path);
-                }
-                $skipped++;
             }
         }
 
-        InspectionReportCache::forget($house);
-        if ($created > 0) {
+        if ($finalize && $created > 0) {
+            InspectionReportCache::forget($house);
             $house->touch();
             DriveReportSyncService::scheduleSync($house);
+        } elseif ($created > 0) {
+            $house->touch();
         }
 
         $message = 'تم رفع '.$created.' صور بنجاح.';
+        if ($driveQueued > 0) {
+            $message .= ' (رفع Drive في الخلفية لـ '.$driveQueued.' صورة).';
+        }
         if ($driveFailed > 0) {
             $message .= ' لكن فشل رفع '.$driveFailed.' صورة إلى Google Drive (الصور محفوظة على السيرفر).';
             if (DriveMediaService::lastError()) {
@@ -144,7 +179,9 @@ class InspectionPhotoController extends Controller
                 'count' => $created,
                 'skipped' => $skipped,
                 'drive_failed' => $driveFailed,
-                'drive_synced' => $driveFailed === 0,
+                'drive_queued' => $driveQueued,
+                'drive_synced' => $driveFailed === 0 && $driveQueued === 0,
+                'finalized' => $finalize,
             ]);
         }
 
@@ -159,6 +196,24 @@ class InspectionPhotoController extends Controller
             'merged_image' => ['required', 'file', 'image', 'max:51200'],
             'description' => ['nullable', 'string', 'max:8000'],
         ]);
+
+        $sourceIds = array_values(array_unique(array_filter(array_map(
+            'intval',
+            (array) $request->input('source_photo_ids', [])
+        ))));
+
+        if (count($sourceIds) < 2) {
+            throw ValidationException::withMessages([
+                'merge' => ['يجب تحديد صورتين على الأقل من نفس القسم.'],
+            ]);
+        }
+
+        $sources = $area->photos()->whereIn('id', $sourceIds)->get();
+        if ($sources->count() !== count($sourceIds)) {
+            throw ValidationException::withMessages([
+                'merge' => ['بعض الصور المحددة غير متوفرة — حدّث الصفحة ثم أعد الدمج.'],
+            ]);
+        }
 
         $disk = Storage::disk('public');
         $path = $request->file('merged_image')->store("inspections/{$house->id}", 'public');
@@ -183,11 +238,25 @@ class InspectionPhotoController extends Controller
             DriveMediaService::pushPhoto($photo);
         }
 
+        $deleted = 0;
+        foreach ($sources as $source) {
+            $source->delete();
+            $deleted++;
+        }
+
         InspectionReportCache::forget($house);
         $house->touch();
         DriveReportSyncService::scheduleSync($house);
 
-        return back()->with('status', 'تم دمج الصور وحفظها كصورة جديدة.');
+        $message = 'تم دمج الصور وحفظها كصورة جديدة.';
+        if ($deleted > 0) {
+            $message .= ' وتم حذف '.$deleted.' من الصور الأصلية.';
+        }
+
+        return redirect()
+            ->route('admin.houses.show', $house)
+            ->withFragment('area-'.$area->id)
+            ->with('status', $message);
     }
 
     public function edit(PropertyHouse $house, InspectionPhoto $photo): View
@@ -358,9 +427,15 @@ class InspectionPhotoController extends Controller
             'notes' => ['nullable', 'array'],
             'composite' => ['nullable', 'file', 'image', 'max:25600'],
             'clear_arrow' => ['sometimes', 'boolean'],
+            'apply_category_id' => ['nullable', 'integer', 'exists:note_categories,id'],
         ]);
 
         $notes = $this->normalizeIncomingNotes($request->input('notes', []));
+        $applyCategoryId = isset($data['apply_category_id']) ? (int) $data['apply_category_id'] : 0;
+        if ($applyCategoryId > 0) {
+            $notes = $this->applyCategoryToNotes($notes, $applyCategoryId, $data['description'] ?? null);
+            $data['description'] = null;
+        }
 
         if ($request->boolean('clear_arrow')) {
             if ($photo->composite_path && Storage::disk('public')->exists($photo->composite_path)) {
@@ -407,11 +482,15 @@ class InspectionPhotoController extends Controller
         $house->touch();
         DriveReportSyncService::scheduleSync($house);
 
-        if ($request->filled('redirect_to')) {
-            return redirect($request->input('redirect_to'))->with('status', 'تم حفظ التعديلات على الصورة.');
+        $returnUrl = $this->safeReturnUrl($request->input('redirect_to'), $house, $photo);
+        if ($returnUrl !== null) {
+            return redirect($returnUrl)->with('status', 'تم حفظ التعديلات على الصورة.');
         }
 
-        return redirect()->route('admin.houses.show', $house)->with('status', 'تم حفظ التعديلات على الصورة.');
+        return redirect()
+            ->route('admin.houses.show', $house)
+            ->withFragment('photo-'.$photo->id)
+            ->with('status', 'تم حفظ التعديلات على الصورة.');
     }
 
     public function destroy(PropertyHouse $house, InspectionPhoto $photo): RedirectResponse
@@ -435,9 +514,14 @@ class InspectionPhotoController extends Controller
 
         $data = $request->validate([
             'notes' => ['nullable', 'array'],
+            'apply_category_id' => ['nullable', 'integer', 'exists:note_categories,id'],
         ]);
 
         $notes = $this->normalizeIncomingNotes($request->input('notes', []));
+        $applyCategoryId = isset($data['apply_category_id']) ? (int) $data['apply_category_id'] : 0;
+        if ($applyCategoryId > 0) {
+            $notes = $this->applyCategoryToNotes($notes, $applyCategoryId, null);
+        }
 
         $photo->notes_json = empty($notes) ? null : $notes;
         $photo->save();
@@ -466,6 +550,58 @@ class InspectionPhotoController extends Controller
      * @param  array<int, mixed>  $incoming
      * @return array<int, array{text:string,category_id:int|null}>
      */
+    /**
+     * @param  array<int, array{text:string,category_id:int|null}>  $notes
+     * @return array<int, array{text:string,category_id:int|null}>
+     */
+    private function applyCategoryToNotes(array $notes, int $categoryId, ?string $description): array
+    {
+        $notes = array_map(static function (array $note) use ($categoryId): array {
+            $note['category_id'] = $categoryId;
+
+            return $note;
+        }, $notes);
+
+        $desc = trim((string) $description);
+        if ($desc === '') {
+            return $notes;
+        }
+
+        $alreadyListed = collect($notes)->contains(
+            static fn (array $note): bool => trim((string) ($note['text'] ?? '')) === $desc
+        );
+        if (! $alreadyListed) {
+            $notes[] = [
+                'text' => $desc,
+                'category_id' => $categoryId,
+            ];
+        }
+
+        return $notes;
+    }
+
+    private function safeReturnUrl(mixed $url, PropertyHouse $house, InspectionPhoto $photo): ?string
+    {
+        if (! is_string($url) || $url === '') {
+            return null;
+        }
+
+        $parsed = parse_url($url);
+        if ($parsed === false) {
+            return null;
+        }
+
+        $path = $parsed['path'] ?? '';
+        $housePath = '/admin/houses/'.$house->id;
+        $editPath = $housePath.'/photos/'.$photo->id.'/edit';
+
+        if ($path !== $housePath && $path !== $editPath && ! str_starts_with($path, $housePath.'/')) {
+            return null;
+        }
+
+        return $url;
+    }
+
     private function normalizeIncomingNotes(array $incoming): array
     {
         return collect($incoming)
@@ -495,6 +631,33 @@ class InspectionPhotoController extends Controller
             ->filter()
             ->values()
             ->all();
+    }
+
+    public function destroyUnannotated(Request $request, PropertyHouse $house): RedirectResponse
+    {
+        $data = $request->validate([
+            'photo_ids' => ['required', 'array', 'min:1'],
+            'photo_ids.*' => ['integer', 'exists:inspection_photos,id'],
+        ]);
+
+        $deleted = 0;
+        InspectionPhoto::query()
+            ->whereIn('id', $data['photo_ids'])
+            ->whereHas('inspectionArea', fn ($q) => $q->where('property_house_id', $house->id))
+            ->get()
+            ->each(function (InspectionPhoto $photo) use (&$deleted): void {
+                if ($photo->hasUserEdits()) {
+                    return;
+                }
+                $photo->delete();
+                $deleted++;
+            });
+
+        InspectionReportCache::forget($house);
+        $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
+        return back()->with('status', 'تم حذف '.$deleted.' صورة بدون تعليم.');
     }
 
     public function bulkDestroy(Request $request, PropertyHouse $house, InspectionArea $area): RedirectResponse
@@ -585,6 +748,42 @@ class InspectionPhotoController extends Controller
         DriveReportSyncService::scheduleSync($house);
 
         return back()->with('status', 'تم تحديث ترتيب الصور.');
+    }
+
+    public function resort(Request $request, PropertyHouse $house, InspectionArea $area): RedirectResponse|\Illuminate\Http\JsonResponse
+    {
+        $this->assertAreaBelongs($house, $area);
+
+        $photos = $area->photos()->get()->all();
+        $originalIds = array_map(fn($p) => (int) $p->id, $photos);
+
+        usort($photos, function ($a, $b) {
+            return InspectionPhoto::compareFilenames($a->original_filename ?? '', $b->original_filename ?? '');
+        });
+
+        $sortedIds = array_map(fn($p) => (int) $p->id, $photos);
+        $changed = ($originalIds !== $sortedIds);
+
+        if ($changed) {
+            foreach ($photos as $index => $photo) {
+                $photo->update(['sort_order' => $index + 1]);
+            }
+
+            InspectionReportCache::forget($house);
+            $house->touch();
+            DriveReportSyncService::scheduleSync($house);
+        }
+
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'changed' => $changed,
+                'message' => $changed ? 'تم إعادة ترتيب الصور بنجاح.' : 'بالفعل مرتبين',
+            ]);
+        }
+
+        $message = $changed ? 'تم إعادة ترتيب الصور بنجاح.' : 'الصور مرتبة بالفعل.';
+        return back()->with('status', $message);
     }
 
     private function assertAreaBelongs(PropertyHouse $house, InspectionArea $area): void
