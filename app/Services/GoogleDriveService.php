@@ -701,6 +701,16 @@ class GoogleDriveService
         }
     }
 
+    public static function deleteHouseFolder(PropertyHouse $house): void
+    {
+        $folderId = trim((string) ($house->drive_folder_id ?? ''));
+        if ($folderId === '') {
+            return;
+        }
+
+        self::deleteFile($folderId);
+    }
+
     /** @deprecated استخدم syncPhoto */
     public static function uploadPhoto(InspectionPhoto $photo): void
     {

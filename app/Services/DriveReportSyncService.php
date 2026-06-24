@@ -23,7 +23,7 @@ class DriveReportSyncService
      */
     public static function scheduleSync(PropertyHouse $house): void
     {
-        if (! self::enabled()) {
+        if (! self::enabled() || ! config('google-drive.sync_reports_on_change', false)) {
             return;
         }
 

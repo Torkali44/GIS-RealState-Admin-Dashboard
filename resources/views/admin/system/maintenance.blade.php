@@ -50,6 +50,7 @@
                 <li>تأكد أن مجلد <code class="text-emerald-400">storage</code> و<code class="text-emerald-400">bootstrap/cache</code> قابل للكتابة (755 أو 775).</li>
                 <li>افتح هذا الموقع وسجّل الدخول كمسؤول.</li>
                 <li>اضغط «تشغيل الصيانة الآن» مرة واحدة.</li>
+                <li>بعد كل رفع: افتح <a href="{{ route('admin.system.clear-cache') }}" class="text-emerald-400 hover:underline">مسح الكاش</a>.</li>
                 <li>يمكنك أيضاً زيارة <a href="{{ route('admin.migrate-db') }}" class="text-emerald-400 hover:underline">تحديث قاعدة البيانات السريع</a> إن لزم.</li>
             </ol>
         </div>

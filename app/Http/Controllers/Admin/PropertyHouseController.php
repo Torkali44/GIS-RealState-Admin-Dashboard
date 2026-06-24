@@ -11,7 +11,9 @@ use App\Services\InspectionReportWordGenerator;
 use App\Services\DriveMediaService;
 use App\Services\DriveReportSyncService;
 use App\Services\GoogleDriveService;
+use App\Support\HouseMediaCleanup;
 use App\Support\InspectionReportCache;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -89,27 +91,31 @@ class PropertyHouseController extends Controller
             },
         ]);
 
-        $noteCategories = NoteCategory::query()
+        $noteCategories = Cache::remember('admin.note-categories.v1', 300, fn () => NoteCategory::query()
             ->orderBy('sort_order')
             ->orderBy('id')
-            ->with(['templates' => fn($q) => $q->orderBy('sort_order')->orderBy('id')])
-            ->get(['id', 'name', 'sort_order']);
+            ->with(['templates' => fn ($q) => $q->orderBy('sort_order')->orderBy('id')])
+            ->get(['id', 'name', 'sort_order']));
 
-        $sectionTemplates = \App\Models\SectionTemplate::ordered()->get(['id', 'name']);
+        $sectionTemplates = Cache::remember('admin.section-templates.v1', 300, fn () => \App\Models\SectionTemplate::ordered()->get(['id', 'name']));
 
         $reportV = InspectionReportCache::versionStamp($house);
         $driveConfigured = GoogleDriveService::isConfigured();
         $driveOAuthNeeded = GoogleDriveService::authMode() === 'oauth'
             && GoogleDriveService::oauthClientConfigured()
-            && !GoogleDriveService::isOAuthConnected();
+            && ! GoogleDriveService::isOAuthConnected();
 
         $pendingDrivePhotos = 0;
         if ($driveConfigured) {
-            $pendingDrivePhotos = (int) \App\Models\InspectionPhoto::query()
-                ->whereHas('inspectionArea', fn ($q) => $q->where('property_house_id', $house->id))
-                ->whereNull('drive_file_id')
-                ->whereNotNull('original_path')
-                ->count();
+            $pendingDrivePhotos = (int) Cache::remember(
+                'house.pending-drive.'.$house->id,
+                60,
+                fn () => \App\Models\InspectionPhoto::query()
+                    ->whereHas('inspectionArea', fn ($q) => $q->where('property_house_id', $house->id))
+                    ->whereNull('drive_file_id')
+                    ->whereNotNull('original_path')
+                    ->count()
+            );
         }
 
         return view('admin.houses.show', compact(
@@ -150,20 +156,12 @@ class PropertyHouseController extends Controller
 
     public function destroy(PropertyHouse $house): RedirectResponse
     {
-        $house->load(['inspectionAreas.photos']);
-
-        foreach ($house->inspectionAreas as $area) {
-            foreach ($area->photos as $photo) {
-                $photo->delete();
-            }
-            $area->delete();
-        }
-
+        HouseMediaCleanup::purgeEntireHouse($house);
         $house->delete();
 
         return redirect()
             ->route('admin.houses.index')
-            ->with('status', 'تم حذف المنزل وجميع المرفقات.');
+            ->with('status', 'تم حذف المنزل وجميع الصور والملفات من السيرفر وقاعدة البيانات.');
     }
 
     public function reportUnannotated(PropertyHouse $house): JsonResponse
@@ -205,6 +203,7 @@ class PropertyHouseController extends Controller
 
         $filename = 'inspection-' . $house->id . '.pdf';
         $disk = Storage::disk('public');
+        $finalPath = 'reports/'.$filename;
 
         @set_time_limit(0);
         @ignore_user_abort(true);
@@ -212,6 +211,14 @@ class PropertyHouseController extends Controller
         @ini_set('memory_limit', '1024M');
 
         $photoCount = $house->photos()->count();
+
+        if (! $request->boolean('refresh') && $disk->exists($finalPath)) {
+            return response()->file($disk->path($finalPath), [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => ($request->query('inline') ? 'inline' : 'attachment').'; filename="'.$filename.'"',
+                'Cache-Control' => 'private, max-age=3600',
+            ]);
+        }
 
         // ── Cache key يعتمد على updated_at للمنزل والصور ──
         // أي تعديل على صورة أو قسم يغير updated_at فيتغير الـ cache key تلقائياً

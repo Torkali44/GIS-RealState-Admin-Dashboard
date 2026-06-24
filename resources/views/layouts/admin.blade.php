@@ -73,6 +73,9 @@
                     <a href="{{ route('admin.system.maintenance') }}"
                         class="text-sm font-semibold text-amber-400/90 hover:text-amber-300 transition-colors">صيانة السيرفر</a>
                 @endif
+                <!-- <a href="{{ route('admin.system.clear-cache') }}"
+                    class="text-sm font-semibold text-slate-400 hover:text-emerald-400 transition-colors"
+                    title="بعد رفع التعديلات">مسح الكاش</a> -->
                 <a href="{{ route('home') }}"
                     class="text-sm font-semibold text-slate-400 hover:text-white transition-colors">الموقع العام</a>
                 <div class="h-4 w-px bg-slate-800"></div>

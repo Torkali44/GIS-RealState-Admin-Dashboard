@@ -11,18 +11,29 @@ use Illuminate\Http\Request;
  */
 class PhotoImageUrl
 {
-    public static function make(PropertyHouse $house, InspectionPhoto $photo, bool $composite = false): string
+    public static function make(PropertyHouse $house, InspectionPhoto $photo, bool $composite = false, int $thumbSize = 0): string
     {
         $c = $composite ? 1 : 0;
         $expires = now()->addHours(24)->timestamp;
 
-        return route('admin.houses.photos.image', [
+        $params = [
             'house' => $house->id,
             'photo' => $photo->id,
             'c' => $c,
             'e' => $expires,
             't' => self::token((int) $house->id, (int) $photo->id, $c, $expires),
-        ]);
+        ];
+
+        if ($thumbSize > 0) {
+            $params['s'] = min(800, max(80, $thumbSize));
+        }
+
+        return route('admin.houses.photos.image', $params);
+    }
+
+    public static function thumb(PropertyHouse $house, InspectionPhoto $photo, bool $composite = false, int $size = 420): string
+    {
+        return self::make($house, $photo, $composite, $size);
     }
 
     public static function token(int $houseId, int $photoId, int $c, int $expires): string

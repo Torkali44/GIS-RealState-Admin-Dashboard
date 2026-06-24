@@ -215,6 +215,15 @@ class InspectionPhoto extends Model
 
     public function deleteStoredFiles(): void
     {
+        $this->loadMissing('inspectionArea');
+        $houseId = (int) ($this->inspectionArea->property_house_id ?? 0);
+
+        if ($houseId > 0) {
+            \App\Support\HouseMediaCleanup::purgePhotoFiles($this, $houseId);
+
+            return;
+        }
+
         $disk = Storage::disk('public');
         foreach ([$this->original_path, $this->composite_path] as $p) {
             if ($p && $disk->exists($p)) {

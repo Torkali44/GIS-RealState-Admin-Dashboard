@@ -29,4 +29,10 @@ return [
 
     'share_with_email' => env('GOOGLE_DRIVE_SHARE_EMAIL'),
 
+    /**
+     * مزامنة PDF/Word على Drive بعد كل تعديل صغير — يبطئ الموقع (توليد تقرير كامل في الخلفية).
+     * false = المزامنة عند فتح/تصدير التقرير فقط (موصى به للسيرفرات المشتركة).
+     */
+    'sync_reports_on_change' => env('GOOGLE_DRIVE_SYNC_ON_CHANGE', false),
+
 ];

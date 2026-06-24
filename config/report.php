@@ -45,8 +45,8 @@ return [
     | أداء تقرير PDF
     |--------------------------------------------------------------------------
     */
-    /** فوق هذا العدد من الصور: بناء PDF لكل قسم ثم دمج (مناسب لـ 300+ صفحة) */
-    'section_build_photo_threshold' => (int) env('REPORT_SECTION_THRESHOLD', 80),
+    /** فوق هذا العدد من الصور: بناء PDF لكل قسم ثم دمج */
+    'section_build_photo_threshold' => (int) env('REPORT_SECTION_THRESHOLD', 50),
 
     'image_max_dimension' => (int) env('REPORT_IMAGE_MAX_DIM', 1100),
 

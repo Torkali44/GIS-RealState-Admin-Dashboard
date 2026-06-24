@@ -8,10 +8,14 @@ function inspectionUploadConfig() {
         maxDim: Number(c.maxDim) || 1400,
         jpegQuality: Number(c.jpegQuality) || 0.8,
         skipBelowBytes: Number(c.skipBelowBytes) || 400000,
-        chunkSize: Number(c.chunkSize) || 30,
+        chunkSize: Number(c.chunkSize) || 20,
         parallelRequests: Number(c.parallelRequests) || 2,
-        processConcurrency: Number(c.processConcurrency) || 6,
+        processConcurrency: Number(c.processConcurrency) || 10,
         maxRetries: Number(c.maxRetries) || 3,
+        bulkThreshold: Number(c.bulkThreshold) || 40,
+        bulkChunkSize: Number(c.bulkChunkSize) || 25,
+        bulkParallelRequests: Number(c.bulkParallelRequests) || 3,
+        bulkSkipClientProcess: c.bulkSkipClientProcess !== false,
     };
 }
 
@@ -69,54 +73,34 @@ window.initInspectionUpload = function(form) {
             statusText.className = 'text-xs text-emerald-400 mt-2';
 
             const cfg = inspectionUploadConfig();
+            const isBulk = files.length >= cfg.bulkThreshold;
+            const skipProcess = isBulk && cfg.bulkSkipClientProcess;
+            const uploadChunkSize = isBulk ? cfg.bulkChunkSize : cfg.chunkSize;
+            const uploadConcurrency = isBulk ? cfg.bulkParallelRequests : cfg.parallelRequests;
+            const maxRetries = cfg.maxRetries;
 
-            // ── 1. معالجة الصور (تصغير + تحويل) ──
-            const maxDim = cfg.maxDim;
-            const concurrency = cfg.processConcurrency;
-            let completed = 0;
             const batchId = (window.crypto && window.crypto.randomUUID)
                 ? window.crypto.randomUUID()
                 : String(Date.now()) + '-' + Math.random().toString(16).slice(2);
-            const processedItems = new Array(files.length);
 
-            for (let i = 0; i < files.length; i += concurrency) {
-                const chunk = files.slice(i, i + concurrency);
-                await Promise.all(chunk.map(async (file, offset) => {
-                    const idx = i + offset;
-                    try {
-                        processedItems[idx] = {
-                            file: await processImage(file, maxDim, cfg),
-                            key: buildFileKey(file, idx),
-                        };
-                    } catch {
-                        processedItems[idx] = { file, key: buildFileKey(file, idx) };
-                    }
-                    completed++;
-                    statusText.innerText = `تمت معالجة ${completed} من ${files.length} صورة...`;
-                }));
-            }
-
-            // ── 2. رفع الصور بالدفعات ──
-            const ready = processedItems.filter(Boolean);
-            const uploadChunkSize = cfg.chunkSize;
-            const uploadConcurrency = cfg.parallelRequests;
-            const maxRetries = cfg.maxRetries;
             let uploaded = 0, skipped = 0, failed = 0;
+            let lastAreaId = null;
+            let lastTotalInArea = 0;
+            let processedCount = 0;
+            let finalizeSent = false;
 
-            statusText.innerText = 'بدء رفع الصور...';
+            statusText.innerText = skipProcess
+                ? `رفع سريع: ${files.length} صورة...`
+                : 'بدء تجهيز ورفع الصور...';
             submitBtn.innerHTML = '<span class="inline-block animate-spin mr-2">⏳</span> جاري الرفع...';
-
-            const chunks = [];
-            for (let i = 0; i < ready.length; i += uploadChunkSize) {
-                chunks.push(ready.slice(i, i + uploadChunkSize));
-            }
 
             async function uploadChunk(chunk, isLastChunk, attempt = 1) {
                 const fd = new FormData();
                 fd.append('_token', form.querySelector('input[name="_token"]').value);
                 fd.append('upload_batch_id', batchId);
-                if (isLastChunk) {
+                if (isLastChunk && !finalizeSent) {
                     fd.append('upload_finalize', '1');
+                    finalizeSent = true;
                 }
                 chunk.forEach(item => {
                     fd.append('photos[]', item.file);
@@ -129,53 +113,135 @@ window.initInspectionUpload = function(form) {
                 });
                 if (!res.ok) {
                     if (attempt < maxRetries) {
-                        await new Promise(r => setTimeout(r, attempt * 800));
-                        return uploadChunk(chunk, attempt + 1);
+                        await new Promise(r => setTimeout(r, attempt * 600));
+                        return uploadChunk(chunk, isLastChunk, attempt + 1);
                     }
                     throw new Error('Upload failed');
                 }
                 const payload = await res.json().catch(() => null);
                 if (!payload || payload.success !== true) {
                     if (attempt < maxRetries) {
-                        await new Promise(r => setTimeout(r, attempt * 800));
-                        return uploadChunk(chunk, attempt + 1);
+                        await new Promise(r => setTimeout(r, attempt * 600));
+                        return uploadChunk(chunk, isLastChunk, attempt + 1);
                     }
                     throw new Error('Bad payload');
                 }
-                return { created: Number(payload.count || 0), skipped: Number(payload.skipped || 0) };
+                return {
+                    created: Number(payload.count || 0),
+                    skipped: Number(payload.skipped || 0),
+                    failed: Number(payload.failed || 0),
+                    totalInArea: Number(payload.total_in_area || 0),
+                    areaId: payload.area_id,
+                };
             }
 
-            let qIdx = 0;
-            async function worker() {
-                while (qIdx < chunks.length) {
-                    const ci = qIdx++;
+            /** Pipeline: معالجة + رفع متوازيان */
+            await new Promise((resolve, reject) => {
+                let fileIndex = 0;
+                let readyBuffer = [];
+                let activeUploads = 0;
+                let processingDone = false;
+                let uploadError = null;
+
+                function updateStatus() {
+                    const saved = uploaded + skipped;
+                    if (skipProcess) {
+                        statusText.innerText = `تم حفظ ${saved} من ${files.length} صورة...`;
+                    } else {
+                        statusText.innerText = `معالجة ${processedCount}/${files.length} | حفظ ${saved}...`;
+                    }
+                }
+
+                function maybeReject(err) {
+                    if (!uploadError) {
+                        uploadError = err;
+                        reject(err);
+                    }
+                }
+
+                async function startUpload(chunk, isLast) {
+                    activeUploads++;
                     try {
-                        const r = await uploadChunk(chunks[ci], ci === chunks.length - 1);
+                        const r = await uploadChunk(chunk, isLast);
                         uploaded += r.created;
                         skipped += r.skipped;
-                    } catch {
-                        failed += chunks[ci].length;
+                        failed += r.failed;
+                        if (r.areaId) lastAreaId = r.areaId;
+                        if (r.totalInArea) lastTotalInArea = r.totalInArea;
+                        updateStatus();
+                    } catch (err) {
+                        failed += chunk.length;
+                        maybeReject(err);
+                    } finally {
+                        activeUploads--;
+                        pump();
                     }
-                    statusText.innerText = `تم حفظ ${uploaded} من ${ready.length} صورة...`;
                 }
-            }
-            await Promise.all(Array.from({ length: Math.min(uploadConcurrency, chunks.length) }, worker));
 
-            // ── 3. تحديث الصور بدون reload ──
+                function pump() {
+                    if (uploadError) return;
+
+                    while (activeUploads < uploadConcurrency) {
+                        if (readyBuffer.length >= uploadChunkSize) {
+                            const chunk = readyBuffer.splice(0, uploadChunkSize);
+                            const isLast = processingDone && readyBuffer.length === 0 && fileIndex >= files.length;
+                            startUpload(chunk, isLast);
+                            continue;
+                        }
+                        if (processingDone && readyBuffer.length > 0) {
+                            const chunk = readyBuffer.splice(0, readyBuffer.length);
+                            startUpload(chunk, true);
+                            continue;
+                        }
+                        if (processingDone && readyBuffer.length === 0 && activeUploads === 0) {
+                            resolve();
+                            return;
+                        }
+                        break;
+                    }
+                }
+
+                async function processLoop() {
+                    const concurrency = skipProcess ? 1 : cfg.processConcurrency;
+                    const workers = Array.from({ length: Math.min(concurrency, files.length) }, async () => {
+                        while (fileIndex < files.length && !uploadError) {
+                            const idx = fileIndex++;
+                            const raw = files[idx];
+                            try {
+                                const file = skipProcess
+                                    ? raw
+                                    : await processImage(raw, cfg.maxDim, cfg);
+                                readyBuffer.push({ file, key: buildFileKey(raw, idx) });
+                            } catch {
+                                readyBuffer.push({ file: raw, key: buildFileKey(raw, idx) });
+                            }
+                            processedCount++;
+                            updateStatus();
+                            pump();
+                        }
+                    });
+                    await Promise.all(workers);
+                    processingDone = true;
+                    pump();
+                }
+
+                processLoop().catch(maybeReject);
+            });
+            const savedTotal = uploaded + skipped;
             if (failed > 0) {
                 statusText.className = 'text-xs text-amber-500 mt-2';
-                statusText.innerText = `تم حفظ ${uploaded}، تجاهل ${skipped}، فشل ${failed} صورة.`;
+                statusText.innerText = `تم حفظ ${savedTotal}، فشل ${failed} صورة.`;
             } else {
                 statusText.className = 'text-xs text-emerald-400 mt-2';
-                statusText.innerText = `✓ تم حفظ ${uploaded} صورة${skipped ? `، تجاهل ${skipped} مكرر` : ''}.`;
+                statusText.innerText = `✓ تم حفظ ${savedTotal} صورة${skipped ? ` (${uploaded} جديد + ${skipped} مسبق)` : ''}.`;
             }
 
             submitBtn.innerHTML = '✓ تم الرفع';
             submitBtn.className = submitBtn.className.replace('bg-slate-800', 'bg-emerald-700');
 
-            // تحديث منطقة الصور لهذا القسم فقط — بدون reload
-            await refreshAreaPhotos(form);
-            bustReportLinks();
+            // ── 3. تحديث منطقة الصور (آخر صفحة لظهور الصور الجديدة) ──
+            await refreshAreaPhotos(form, lastAreaId, lastTotalInArea);
+            bustReportLinks(true);
 
             // reset form للرفع التالي
             setTimeout(() => {
@@ -200,68 +266,13 @@ window.initInspectionUpload = function(form) {
     });
 
     /**
-     * تحديث منطقة الصور لهذا القسم بدون reload للصفحة كلها
+     * تحديث منطقة الصور — يُعرّف في inspection-panel.js
      */
-    async function refreshAreaPhotos(form) {
-        try {
-            // جلب الصفحة الحالية بـ fetch
-            const res = await fetch(window.location.href, {
-                headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html' }
-            });
-            if (!res.ok) {
-                // fallback: reload بعد تأخير
-                setTimeout(() => window.location.reload(), 1500);
-                return;
-            }
-            const html = await res.text();
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-
-            // إيجاد الـ area wrapper الخاص بهذا الفورم
-            const areaWrapper = form.closest('[id^="area-"]');
-            if (!areaWrapper) {
-                setTimeout(() => window.location.reload(), 1000);
-                return;
-            }
-
-            const areaId = areaWrapper.id; // e.g. "area-5"
-            const newAreaWrapper = doc.getElementById(areaId);
-
-            if (!newAreaWrapper) {
-                setTimeout(() => window.location.reload(), 1000);
-                return;
-            }
-
-            // استبدال محتوى منطقة الصور فقط (الـ photo grid)
-            const photoGrid = areaWrapper.querySelector('[data-photo-grid]');
-            const newPhotoGrid = newAreaWrapper.querySelector('[data-photo-grid]');
-
-            if (photoGrid && newPhotoGrid) {
-                photoGrid.innerHTML = newPhotoGrid.innerHTML;
-                // إعادة تشغيل Alpine.js إن وجد
-                if (window.Alpine) window.Alpine.initTree(photoGrid);
-            } else {
-                // استبدال الـ card كاملة
-                const card = areaWrapper.querySelector('.rounded-2xl');
-                const newCard = newAreaWrapper.querySelector('.rounded-2xl');
-                if (card && newCard) {
-                    card.innerHTML = newCard.innerHTML;
-                    // إعادة تهيئة upload forms الجديدة
-                    card.querySelectorAll('[data-upload-form]').forEach(f => {
-                        if (window.initInspectionUpload) window.initInspectionUpload(f);
-                    });
-                    card.querySelectorAll('[data-merge-form]').forEach(f => {
-                        if (window.initInspectionMerge) window.initInspectionMerge(f);
-                    });
-                } else {
-                    setTimeout(() => window.location.reload(), 1000);
-                }
-            }
-
-            syncReportLinksFromDocument(doc);
-        } catch (err) {
-            console.error('Refresh failed:', err);
-            setTimeout(() => window.location.reload(), 1000);
+    async function refreshAreaPhotos(form, areaId, totalInArea) {
+        const areaWrapper = form.closest('[id^="area-"]');
+        const panelUrl = form.getAttribute('data-photos-panel-url');
+        if (window.refreshAreaPhotosPanel) {
+            await window.refreshAreaPhotosPanel(areaWrapper, panelUrl, areaId, totalInArea);
         }
     }
 
@@ -306,25 +317,18 @@ window.initInspectionUpload = function(form) {
         return [index, file.name, file.size, file.lastModified || 0].join('|');
     }
 
-    /** تحديث روابط التقرير بعد رفع صور (بدون reload كامل) */
-    function bustReportLinks() {
-        document.querySelectorAll('a[href*="report"]').forEach((anchor) => {
+    function bustReportLinks(forceRefresh) {
+        document.querySelectorAll('a[data-pdf-export], a[href*="report"]').forEach((anchor) => {
             try {
                 const url = new URL(anchor.href, window.location.origin);
                 url.searchParams.set('v', String(Date.now()));
-                url.searchParams.delete('refresh');
+                if (forceRefresh) {
+                    url.searchParams.set('refresh', '1');
+                } else {
+                    url.searchParams.delete('refresh');
+                }
                 anchor.href = url.toString();
             } catch (_) { /* ignore */ }
-        });
-    }
-
-    function syncReportLinksFromDocument(doc) {
-        const current = document.querySelectorAll('a[href*="report.pdf"], a[href*="inline"]');
-        const fresh = doc.querySelectorAll('a[href*="report.pdf"], a[href*="inline"]');
-        fresh.forEach((freshLink, i) => {
-            if (current[i]) {
-                current[i].href = freshLink.href;
-            }
         });
     }
 };

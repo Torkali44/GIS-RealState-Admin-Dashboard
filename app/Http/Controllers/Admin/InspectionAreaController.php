@@ -7,6 +7,7 @@ use App\Models\InspectionArea;
 use App\Models\PropertyHouse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use App\Services\DriveReportSyncService;
 use App\Support\InspectionReportCache;
@@ -31,6 +32,41 @@ class InspectionAreaController extends Controller
         DriveReportSyncService::scheduleSync($house);
 
         return back()->with('status', 'تمت إضافة القسم.');
+    }
+
+    public function photosPanel(Request $request, PropertyHouse $house, InspectionArea $area): Response
+    {
+        $this->assertAreaBelongs($house, $area);
+
+        $perPageOptions = [20, 40, 80, 120];
+        $perPage = (int) $request->query('photos_per_page', session('photos_per_page', 40));
+        if (! in_array($perPage, $perPageOptions, true)) {
+            $perPage = 40;
+        }
+
+        $pageName = 'area_'.$area->id.'_page';
+        $currentPage = max(1, (int) $request->query($pageName, 1));
+
+        if ($request->filled('highlight_photo')) {
+            $photoId = (int) $request->query('highlight_photo');
+            $index = $area->photos()
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->pluck('id')
+                ->search($photoId);
+
+            if ($index !== false) {
+                $currentPage = (int) floor($index / $perPage) + 1;
+            }
+        }
+
+        \Illuminate\Pagination\Paginator::currentPageResolver(fn () => $currentPage);
+
+        return response()->view('admin.houses._area_photos_panel', [
+            'house' => $house,
+            'area' => $area,
+            'perPage' => $perPage,
+        ]);
     }
 
     public function update(Request $request, PropertyHouse $house, InspectionArea $area): RedirectResponse

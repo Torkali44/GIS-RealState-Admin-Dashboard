@@ -39,6 +39,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::patch('houses/{house}/areas/{area}/move', [InspectionAreaController::class, 'move'])->name('houses.areas.move');
     Route::delete('houses/{house}/areas/{area}', [InspectionAreaController::class, 'destroy'])->name('houses.areas.destroy');
     Route::post('houses/{house}/areas/{area}/photos', [InspectionPhotoController::class, 'store'])->name('houses.areas.photos.store');
+    Route::get('houses/{house}/areas/{area}/photos-panel', [InspectionAreaController::class, 'photosPanel'])->name('houses.areas.photos.panel');
     Route::post('houses/{house}/areas/{area}/photos/merge', [InspectionPhotoController::class, 'storeMerged'])->name('houses.areas.photos.merge');
     Route::post('houses/{house}/areas/{area}/photos/resort', [InspectionPhotoController::class, 'resort'])->name('houses.areas.photos.resort');
     Route::post('houses/{house}/areas/{area}/photos/deduplicate', [InspectionPhotoController::class, 'deduplicate'])->name('houses.areas.photos.deduplicate');
@@ -74,6 +75,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
 
     Route::get('system/maintenance', [SystemMaintenanceController::class, 'index'])->name('system.maintenance');
     Route::post('system/maintenance/run', [SystemMaintenanceController::class, 'run'])->name('system.maintenance.run');
+    Route::get('clear-cache', \App\Http\Controllers\Admin\CacheClearController::class)->name('system.clear-cache');
 
     Route::get('migrate-db', function (): \Illuminate\Http\Response {
         $lines = [];
