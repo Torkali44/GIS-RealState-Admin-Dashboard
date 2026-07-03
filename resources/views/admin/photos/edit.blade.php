@@ -8,6 +8,11 @@
             $returnUrl = request('return');
             if (! is_string($returnUrl) || $returnUrl === '') {
                 $returnUrl = route('admin.houses.show', $house).'#photo-'.$photo->id;
+            } else {
+                $normalized = \App\Support\PhotoReturnUrl::normalize($returnUrl, $house, $photo);
+                if ($normalized !== null) {
+                    $returnUrl = $normalized;
+                }
             }
         @endphp
         <a href="{{ $returnUrl }}" class="text-sm text-emerald-400 hover:underline">← العودة لـ

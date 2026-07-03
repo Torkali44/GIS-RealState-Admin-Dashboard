@@ -34,9 +34,19 @@ class InspectionAreaController extends Controller
         return back()->with('status', 'تمت إضافة القسم.');
     }
 
-    public function photosPanel(Request $request, PropertyHouse $house, InspectionArea $area): Response
+    public function photosPanel(Request $request, PropertyHouse $house, InspectionArea $area): Response|\Illuminate\Http\RedirectResponse
     {
         $this->assertAreaBelongs($house, $area);
+
+        if (! $request->ajax() && ! $request->wantsJson()) {
+            $params = collect($request->query())->filter(fn ($v) => is_scalar($v))->all();
+
+            return redirect()->to(
+                route('admin.houses.show', $house)
+                .($params !== [] ? '?'.http_build_query($params) : '')
+                .'#area-'.$area->id
+            );
+        }
 
         $perPageOptions = [20, 40, 80, 120];
         $perPage = (int) $request->query('photos_per_page', session('photos_per_page', 40));

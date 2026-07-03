@@ -15,6 +15,8 @@ use Throwable;
 use App\Support\RasterImageForTcpdf;
 use App\Support\InspectionReportCache;
 use App\Support\MergedPhotoNotes;
+use App\Support\PhotoImageMerger;
+use App\Support\PhotoReturnUrl;
 use App\Support\ImageThumbCache;
 use App\Support\PhotoImageUrl;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -207,7 +209,7 @@ class InspectionPhotoController extends Controller
         $this->assertAreaBelongs($house, $area);
 
         $data = $request->validate([
-            'merged_image' => ['required', 'file', 'image', 'max:51200'],
+            'merged_image' => ['nullable', 'file', 'image', 'max:51200'],
             'description' => ['nullable', 'string', 'max:8000'],
         ]);
 
@@ -232,10 +234,46 @@ class InspectionPhotoController extends Controller
         $mergedMeta = MergedPhotoNotes::fromSources($sources, $data['description'] ?? null);
 
         $disk = Storage::disk('public');
-        $path = $request->file('merged_image')->store("inspections/{$house->id}", 'public');
-        $converted = RasterImageForTcpdf::convertStoredFileToJpegIfNeeded($disk, $path);
-        if ($converted !== null) {
-            $path = $converted;
+        $tmpMerge = null;
+
+        if ($request->hasFile('merged_image')) {
+            $path = $request->file('merged_image')->store("inspections/{$house->id}", 'public');
+        } else {
+            @set_time_limit(180);
+            @ini_set('memory_limit', '512M');
+
+            $tmpMerge = PhotoImageMerger::mergePhotos(
+                $sources->all(),
+                (int) config('upload.merge_max_height', 900),
+                8,
+                (int) round((float) config('upload.merge_jpeg_quality', 0.85) * 100)
+            );
+
+            if ($tmpMerge === null || ! is_readable($tmpMerge)) {
+                throw ValidationException::withMessages([
+                    'merge' => ['تعذر دمج الصور — تأكد أن الصور المحددة متاحة على السيرفر (جرّب «إصلاح عرض الصور»).'],
+                ]);
+            }
+
+            $filename = 'merged-'.now()->format('Ymd-His').'.jpg';
+            $path = "inspections/{$house->id}/{$filename}";
+            $stream = fopen($tmpMerge, 'rb');
+            if ($stream === false) {
+                @unlink($tmpMerge);
+                throw ValidationException::withMessages([
+                    'merge' => ['تعذر حفظ الصورة المدمجة.'],
+                ]);
+            }
+            $disk->put($path, $stream);
+            fclose($stream);
+            @unlink($tmpMerge);
+        }
+
+        if ($request->hasFile('merged_image')) {
+            $converted = RasterImageForTcpdf::convertStoredFileToJpegIfNeeded($disk, $path);
+            if ($converted !== null) {
+                $path = $converted;
+            }
         }
 
         $this->copyUploadedToPublicStorage($path, $house);
@@ -525,9 +563,18 @@ class InspectionPhotoController extends Controller
         $house->touch();
         DriveReportSyncService::scheduleSync($house);
 
-        $returnUrl = $this->safeReturnUrl($request->input('redirect_to'), $house, $photo);
+        $returnUrl = PhotoReturnUrl::normalize($request->input('redirect_to'), $house, $photo);
         if ($returnUrl !== null) {
             return redirect($returnUrl)->with('status', 'تم حفظ التعديلات على الصورة.');
+        }
+
+        $photo->loadMissing('inspectionArea');
+        if ($photo->inspectionArea) {
+            return redirect(PhotoReturnUrl::forHousePhoto(
+                $house,
+                $photo->inspectionArea,
+                $photo
+            ))->with('status', 'تم حفظ التعديلات على الصورة.');
         }
 
         return redirect()
@@ -621,28 +668,6 @@ class InspectionPhotoController extends Controller
         }
 
         return $notes;
-    }
-
-    private function safeReturnUrl(mixed $url, PropertyHouse $house, InspectionPhoto $photo): ?string
-    {
-        if (! is_string($url) || $url === '') {
-            return null;
-        }
-
-        $parsed = parse_url($url);
-        if ($parsed === false) {
-            return null;
-        }
-
-        $path = $parsed['path'] ?? '';
-        $housePath = '/admin/houses/'.$house->id;
-        $editPath = $housePath.'/photos/'.$photo->id.'/edit';
-
-        if ($path !== $housePath && $path !== $editPath && ! str_starts_with($path, $housePath.'/')) {
-            return null;
-        }
-
-        return $url;
     }
 
     private function normalizeIncomingNotes(array $incoming): array

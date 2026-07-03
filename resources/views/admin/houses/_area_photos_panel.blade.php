@@ -124,7 +124,7 @@
                                 </form>
                             </div>
                         </div>
-                        <a href="{{ route('admin.houses.photos.edit', [$house, $photo, 'return' => request()->fullUrl().'#photo-'.$photo->id]) }}"
+                        <a href="{{ route('admin.houses.photos.edit', [$house, $photo, 'return' => \App\Support\PhotoReturnUrl::forHousePhoto($house, $area, $photo, (int) $photosPaginator->currentPage(), $perPage)]) }}"
                             class="w-full rounded-lg bg-emerald-500 py-2 text-center text-xs font-bold text-slate-950 hover:bg-emerald-400">
                             {{ $photo->tip_x !== null ? 'تعديل السهم' : 'إضافة سهم' }}
                         </a>
