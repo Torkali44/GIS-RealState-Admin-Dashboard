@@ -19,8 +19,9 @@
     }
 
     dialog#notes-modal-dialog::backdrop {
-        background: rgba(2, 6, 23, 0.85);
-        backdrop-filter: blur(8px);
+        background: rgba(2, 6, 23, 0.88) !important;
+        backdrop-filter: blur(6px) !important;
+        -webkit-backdrop-filter: blur(6px) !important;
     }
 </style>
 

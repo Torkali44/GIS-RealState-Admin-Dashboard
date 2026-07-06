@@ -35,6 +35,8 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::get('houses/{house}/report-word', [PropertyHouseController::class, 'reportWord'])->name('houses.report.word');
     Route::resource('houses', PropertyHouseController::class)->only(['index', 'create', 'store', 'show', 'edit', 'update', 'destroy']);
     Route::post('houses/{house}/areas', [InspectionAreaController::class, 'store'])->name('houses.areas.store');
+    Route::post('houses/{house}/areas/bulk', [InspectionAreaController::class, 'bulkStore'])->name('houses.areas.bulk-store');
+    Route::get('houses/{house}/import-batch-status', [InspectionAreaController::class, 'importBatchStatus'])->name('houses.import-batch-status');
     Route::patch('houses/{house}/areas/{area}', [InspectionAreaController::class, 'update'])->name('houses.areas.update');
     Route::patch('houses/{house}/areas/{area}/move', [InspectionAreaController::class, 'move'])->name('houses.areas.move');
     Route::delete('houses/{house}/areas/{area}', [InspectionAreaController::class, 'destroy'])->name('houses.areas.destroy');

@@ -249,6 +249,27 @@
                         إضافة القسم
                     </button>
                 </form>
+
+                <div class="mt-8 border-t border-slate-800 pt-6" data-house-folder-import>
+                    <h3 class="text-lg font-bold text-white mb-2">استيراد مجلد المنزل</h3>
+                    <p class="text-xs leading-relaxed text-slate-400 mb-4">
+                        اختر مجلد المنزل من جهازك. كل فولد فرعي = قسم .
+                    </p>
+                    <button type="button" data-folder-import-pick
+                        class="flex w-full items-center justify-center gap-2 rounded-xl border border-sky-500/40 bg-sky-500/10 py-3 text-sm font-bold text-sky-300 transition hover:bg-sky-500/20 hover:text-sky-200">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                        </svg>
+                        اختيار مجلد المنزل
+                    </button>
+                    <input type="file" data-folder-import-fallback class="hidden" webkitdirectory directory multiple />
+                    <button type="button" data-folder-import-resume
+                        class="hidden mt-2 w-full rounded-xl border border-amber-500/40 bg-amber-500/10 py-2.5 text-xs font-bold text-amber-300 hover:bg-amber-500/20">
+                        استئناف — اختر نفس مجلد المنزل
+                    </button>
+                    <p data-folder-import-status class="text-xs mt-2 text-slate-500"></p>
+                </div>
             </div>
         </div>
 
@@ -423,8 +444,120 @@
 
     @include('admin.houses._notes_modal', ['noteCategories' => $noteCategories])
 
+    <dialog id="folder-import-dialog" class="w-full max-w-xl rounded-2xl border-0 bg-transparent p-0 text-white shadow-none backdrop:bg-black/85">
+        <div class="overflow-hidden rounded-2xl border border-slate-700/80 bg-gradient-to-b from-slate-900 to-slate-950 shadow-2xl">
+            <div class="border-b border-slate-800/80 bg-slate-900/90 px-6 py-4">
+                <div class="flex items-start gap-3">
+                    <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/25">
+                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                        </svg>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <h3 class="text-lg font-bold text-white" data-folder-import-dialog-title>استيراد مجلد المنزل</h3>
+                            <span data-import-status-badge class="rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-slate-800 text-slate-400">جاهز</span>
+                        </div>
+                        <p class="mt-1 text-sm text-slate-400 leading-relaxed" data-folder-import-dialog-body>اختر مجلد المنزل واتبع التقدم من هنا.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-6 py-5">
+                <div data-import-confirm class="hidden rounded-xl border border-slate-700/60 bg-slate-950/50 p-4">
+                    <p class="text-xs font-bold text-slate-400 mb-2">الأقسام والصور</p>
+                    <ul class="max-h-44 overflow-y-auto text-sm space-y-1.5" data-import-confirm-list></ul>
+                </div>
+
+                <div data-import-paused class="hidden rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                    <p class="text-sm font-bold text-amber-300">استيراد متوقف مؤقتاً</p>
+                    <p class="mt-2 text-xs leading-relaxed text-slate-400" data-import-paused-hint>
+                        اضغط «استئناف» واختر <strong class="text-amber-200">نفس مجلد المنزل</strong> من جهازك.
+                        الصور المرفوعة لن تُكرَّر؛ يُكمل من حيث توقف. الصور الجديدة أو المعدّلة محلياً تُرفع تلقائياً.
+                    </p>
+                    <p class="mt-2 text-xs text-slate-500" data-import-paused-sections></p>
+                </div>
+
+                <div data-import-notice class="hidden rounded-xl border p-4 text-center" data-import-notice-panel>
+                    <p class="text-base font-bold" data-import-notice-title></p>
+                    <p class="mt-2 text-sm text-slate-400" data-import-notice-body></p>
+                </div>
+
+                <div data-import-progress class="mt-0">
+                    <div class="grid grid-cols-4 gap-2 text-center text-xs mb-4">
+                        <div class="rounded-xl bg-slate-800/60 py-2.5 ring-1 ring-slate-700/50">
+                            <div class="text-emerald-400 font-black text-lg" data-import-stat-saved>0</div>
+                            <div class="text-slate-500 mt-0.5">محفوظ</div>
+                        </div>
+                        <div class="rounded-xl bg-slate-800/60 py-2.5 ring-1 ring-slate-700/50">
+                            <div class="text-amber-400 font-black text-lg" data-import-stat-skipped>0</div>
+                            <div class="text-slate-500 mt-0.5">مكرر</div>
+                        </div>
+                        <div class="rounded-xl bg-slate-800/60 py-2.5 ring-1 ring-slate-700/50">
+                            <div class="text-red-400 font-black text-lg" data-import-stat-failed>0</div>
+                            <div class="text-slate-500 mt-0.5">فشل</div>
+                        </div>
+                        <div class="rounded-xl bg-slate-800/60 py-2.5 ring-1 ring-slate-700/50">
+                            <div class="text-sky-400 font-black text-lg" data-import-stat-sections>0/0</div>
+                            <div class="text-slate-500 mt-0.5">قسم</div>
+                        </div>
+                    </div>
+                    <div class="h-3 overflow-hidden rounded-full bg-slate-800">
+                        <div class="h-full rounded-full bg-gradient-to-l from-sky-400 via-cyan-400 to-emerald-500 transition-all duration-300 shadow-[0_0_12px_rgba(56,189,248,0.35)]" data-folder-import-dialog-bar style="width:0%"></div>
+                    </div>
+                    <p data-import-network class="hidden text-xs mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-amber-300"></p>
+                    <div class="mt-3 rounded-xl border border-slate-800 bg-black/30 p-3 max-h-32 overflow-y-auto text-[11px] font-mono leading-relaxed" data-import-log></div>
+                    <details data-import-failed-wrap class="hidden mt-3 text-xs rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                        <summary class="cursor-pointer text-red-400 font-bold">تقرير الملفات الفاشلة (<span data-import-failed-count>0</span>)</summary>
+                        <ul class="mt-2 space-y-1 list-disc list-inside text-red-300/90" data-import-failed-list></ul>
+                    </details>
+                </div>
+
+                @php
+                    $driveEnabled = \App\Services\DriveMediaService::enabled();
+                    $driveDeleteLocal = (bool) config('google-drive.delete_local_after_upload', true);
+                @endphp
+                @if($driveEnabled)
+                <p class="mt-4 text-[10px] leading-relaxed text-slate-600 border-t border-slate-800/80 pt-3" data-import-storage-hint>
+                   
+                    @if($driveDeleteLocal)
+                        ← حذف النسخة المحلية بعد التأكد من Drive
+                    @else
+                        <!-- (النسخة المحلية تبقى على VPS) -->
+                    @endif
+                </p>
+                @else
+                <p class="mt-4 text-[10px] text-slate-600 border-t border-slate-800/80 pt-3">التخزين: ملفات على سيرفر VPS (storage/app/public)</p>
+                @endif
+            </div>
+
+            <div class="flex flex-wrap gap-2 justify-end border-t border-slate-800/80 bg-slate-900/50 px-6 py-4">
+                <button type="button" data-import-btn-cancel class="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-bold text-slate-300 hover:bg-slate-700">إلغاء</button>
+                <button type="button" data-import-btn-pause class="hidden rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-sm font-bold text-amber-300 hover:bg-amber-500/20">إيقاف مؤقت</button>
+                <button type="button" data-import-btn-confirm class="hidden rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20">بدء الاستيراد</button>
+                <button type="button" data-import-btn-resume class="hidden rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400">استئناف</button>
+                <button type="button" data-import-btn-close class="hidden rounded-xl bg-sky-500/20 border border-sky-500/40 px-4 py-2.5 text-sm font-bold text-sky-300 hover:bg-sky-500/30">إغلاق</button>
+            </div>
+        </div>
+    </dialog>
+
     <style>
         #pdf-unannotated-dialog:not([open]) { display: none !important; }
+        #folder-import-dialog:not([open]) { display: none !important; }
+        #folder-import-dialog {
+            margin: auto;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            width: min(96vw, 36rem);
+            max-width: 36rem;
+        }
+        #folder-import-dialog::backdrop {
+            background: rgba(2, 6, 23, 0.88) !important;
+            backdrop-filter: blur(6px) !important;
+            -webkit-backdrop-filter: blur(6px) !important;
+        }
         #pdf-unannotated-dialog {
             margin: auto;
             padding: 0;
@@ -434,7 +567,9 @@
             max-width: 42rem;
         }
         #pdf-unannotated-dialog::backdrop {
-            background: rgba(2, 6, 23, 0.8);
+            background: rgba(2, 6, 23, 0.88) !important;
+            backdrop-filter: blur(6px) !important;
+            -webkit-backdrop-filter: blur(6px) !important;
         }
         #pdf-unannotated-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -505,18 +640,30 @@
                 'chunkSize' => (int) config('upload.chunk_size', 20),
                 'parallelRequests' => (int) config('upload.parallel_requests', 2),
                 'processConcurrency' => (int) config('upload.client_process_concurrency', 10),
-                'maxRetries' => 3,
+                'maxRetries' => (int) config('upload.max_retries', 4),
+                'maxFileBytes' => 20 * 1024 * 1024,
                 'bulkThreshold' => (int) config('upload.bulk_threshold', 40),
-                'bulkChunkSize' => (int) config('upload.bulk_chunk_size', 25),
-                'bulkParallelRequests' => (int) config('upload.bulk_parallel_requests', 3),
+                'bulkChunkSize' => (int) config('upload.bulk_chunk_size', 30),
+                'bulkParallelRequests' => (int) config('upload.bulk_parallel_requests', 4),
                 'bulkSkipClientProcess' => (bool) config('upload.bulk_skip_client_process', true),
             ];
         @endphp
         <script>
             window.INSPECTION_UPLOAD_CONFIG = @json($inspectionUploadConfig);
+            window.INSPECTION_FOLDER_IMPORT = {
+                csrfToken: @json(csrf_token()),
+                houseId: {{ (int) $house->id }},
+                bulkAreasUrl: @json(route('admin.houses.areas.bulk-store', $house)),
+                batchStatusUrl: @json(route('admin.houses.import-batch-status', $house)),
+                maxAreas: {{ (int) config('upload.folder_import_max_areas', 30) }},
+                maxPhotosPerArea: {{ (int) config('upload.folder_import_max_photos_per_area', 500) }},
+                maxTotalPhotos: {{ (int) config('upload.folder_import_max_total_photos', 5000) }},
+            };
         </script>
+        <script src="{{ asset('js/inspection-upload-core.js') }}"></script>
         <script src="{{ asset('js/inspection-panel.js') }}"></script>
         <script src="{{ asset('js/inspection-upload.js') }}"></script>
+        <script src="{{ asset('js/inspection-folder-import.js') }}"></script>
         <script src="{{ asset('js/inspection-merge.js') }}"></script>
         <script>
             document.addEventListener('DOMContentLoaded', () => {

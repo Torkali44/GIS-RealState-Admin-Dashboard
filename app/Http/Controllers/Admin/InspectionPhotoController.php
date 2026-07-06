@@ -46,6 +46,8 @@ class InspectionPhotoController extends Controller
             'upload_batch_id' => ['nullable', 'string', 'max:100'],
             'upload_file_keys' => ['nullable', 'array'],
             'upload_file_keys.*' => ['nullable', 'string', 'max:500'],
+            'upload_sort_indexes' => ['nullable', 'array'],
+            'upload_sort_indexes.*' => ['nullable', 'integer', 'min:0'],
             'upload_finalize' => ['sometimes', 'boolean'],
         ]);
 
@@ -58,8 +60,11 @@ class InspectionPhotoController extends Controller
         $driveQueued = 0;
         $batchId = $request->input('upload_batch_id');
         $fileKeys = $request->input('upload_file_keys', []);
+        $sortIndexes = $request->input('upload_sort_indexes', []);
+        $preserveOrder = is_array($sortIndexes) && $sortIndexes !== [];
         $finalize = $request->boolean('upload_finalize');
         $createdPhotoIds = [];
+        $errorDetails = [];
 
         $uploadedFiles = $request->file('photos', []);
         $pairedFiles = [];
@@ -69,15 +74,21 @@ class InspectionPhotoController extends Controller
                     'index' => $index,
                     'file' => $file,
                     'filename' => $file->getClientOriginalName(),
+                    'sort_index' => isset($sortIndexes[$index]) ? (int) $sortIndexes[$index] : $index,
                 ];
             } elseif ($file) {
                 $failed++;
+                $errorDetails[] = ['file' => 'ملف غير صالح', 'reason' => 'رفع تالف'];
             }
         }
 
-        usort($pairedFiles, function ($a, $b) {
-            return InspectionPhoto::compareFilenames($a['filename'], $b['filename']);
-        });
+        if ($preserveOrder) {
+            usort($pairedFiles, fn (array $a, array $b): int => $a['sort_index'] <=> $b['sort_index']);
+        } else {
+            usort($pairedFiles, function (array $a, array $b): int {
+                return InspectionPhoto::compareFilenames($a['filename'], $b['filename']);
+            });
+        }
 
         foreach ($pairedFiles as $pair) {
             $index = $pair['index'];
@@ -86,10 +97,14 @@ class InspectionPhotoController extends Controller
             try {
                 validator(
                     ['photo' => $file],
-                    ['photo' => ['file', 'image', 'max:20480']]
+                    ['photo' => ['file', 'image', 'mimes:jpeg,jpg,png,webp,gif,bmp', 'max:20480']]
                 )->validate();
-            } catch (ValidationException) {
+            } catch (ValidationException $e) {
                 $failed++;
+                $errorDetails[] = [
+                    'file' => $file->getClientOriginalName(),
+                    'reason' => 'صيغة أو حجم غير مدعوم',
+                ];
 
                 continue;
             }
@@ -101,6 +116,13 @@ class InspectionPhotoController extends Controller
                     ->where('upload_file_key', $fileKey)
                     ->exists()
             ) {
+                $skipped++;
+
+                continue;
+            }
+
+            $originalName = $file->getClientOriginalName();
+            if ($area->photos()->where('original_filename', $originalName)->exists()) {
                 $skipped++;
 
                 continue;
@@ -122,7 +144,7 @@ class InspectionPhotoController extends Controller
                 $photo = InspectionPhoto::create([
                     'inspection_area_id' => $area->id,
                     'original_path' => $path,
-                    'original_filename' => $file->getClientOriginalName(),
+                    'original_filename' => $originalName,
                     'sort_order' => $maxSort,
                     'upload_batch_id' => $batchId,
                     'upload_file_key' => $fileKey,
@@ -130,16 +152,17 @@ class InspectionPhotoController extends Controller
                 $createdPhotoIds[] = (int) $photo->id;
                 $created++;
             } catch (QueryException $e) {
-                if ((string) $e->getCode() !== '23000') {
-                    if ($disk->exists($path)) {
-                        $disk->delete($path);
-                    }
-                    $failed++;
-
-                    continue;
-                }
                 if ($disk->exists($path)) {
                     $disk->delete($path);
+                }
+                if ((string) $e->getCode() !== '23000') {
+                    $failed++;
+                    $errorDetails[] = [
+                        'file' => $originalName,
+                        'reason' => 'خطأ قاعدة بيانات',
+                    ];
+
+                    continue;
                 }
                 $skipped++;
             }
@@ -198,6 +221,7 @@ class InspectionPhotoController extends Controller
                 'drive_queued' => $driveQueued,
                 'drive_synced' => $driveFailed === 0 && $driveQueued === 0,
                 'finalized' => $finalize,
+                'errors' => $errorDetails,
             ]);
         }
 

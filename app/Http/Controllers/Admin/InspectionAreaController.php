@@ -4,12 +4,15 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\InspectionArea;
+use App\Models\InspectionPhoto;
 use App\Models\PropertyHouse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use App\Services\DriveReportSyncService;
+use App\Support\AreaNameSanitizer;
 use App\Support\InspectionReportCache;
 
 class InspectionAreaController extends Controller
@@ -32,6 +35,124 @@ class InspectionAreaController extends Controller
         DriveReportSyncService::scheduleSync($house);
 
         return back()->with('status', 'تمت إضافة القسم.');
+    }
+
+    public function bulkStore(Request $request, PropertyHouse $house): JsonResponse
+    {
+        @ini_set('max_execution_time', '120');
+
+        $maxAreas = max(1, (int) config('upload.folder_import_max_areas', 30));
+
+        $data = $request->validate([
+            'sections' => ['required', 'array', 'min:1', 'max:'.$maxAreas],
+            'sections.*' => ['required', 'string', 'max:255'],
+        ]);
+
+        $areas = [];
+        $importedAreaIds = [];
+
+        DB::transaction(function () use ($house, $data, &$areas, &$importedAreaIds): void {
+            foreach ($data['sections'] as $index => $rawName) {
+                $name = AreaNameSanitizer::sanitize((string) $rawName);
+                if ($name === '') {
+                    $areas[] = [
+                        'index' => $index,
+                        'id' => null,
+                        'name' => null,
+                        'upload_url' => null,
+                        'invalid' => true,
+                    ];
+
+                    continue;
+                }
+
+                $existing = $house->inspectionAreas()->where('name', $name)->first();
+                if ($existing) {
+                    $existing->update(['sort_order' => $index + 1]);
+                    $importedAreaIds[] = (int) $existing->id;
+                    $areas[] = [
+                        'index' => $index,
+                        'id' => (int) $existing->id,
+                        'name' => $name,
+                        'upload_url' => route('admin.houses.areas.photos.store', [$house, $existing]),
+                        'existed' => true,
+                    ];
+
+                    continue;
+                }
+
+                $area = $house->inspectionAreas()->create([
+                    'name' => $name,
+                    'sort_order' => $index + 1,
+                ]);
+                $importedAreaIds[] = (int) $area->id;
+
+                $areas[] = [
+                    'index' => $index,
+                    'id' => (int) $area->id,
+                    'name' => $name,
+                    'upload_url' => route('admin.houses.areas.photos.store', [$house, $area]),
+                    'existed' => false,
+                ];
+            }
+
+            $tail = count($importedAreaIds);
+            $house->inspectionAreas()
+                ->whereNotIn('id', $importedAreaIds)
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get()
+                ->each(function (InspectionArea $area) use (&$tail): void {
+                    $tail++;
+                    $area->update(['sort_order' => $tail]);
+                });
+
+            $this->normalizeSortOrders($house);
+        });
+
+        if ($areas === [] || ! collect($areas)->contains(fn (array $a): bool => ! empty($a['upload_url']))) {
+            return response()->json([
+                'success' => false,
+                'message' => 'لم يُعثر على أسماء أقسام صالحة.',
+            ], 422);
+        }
+
+        InspectionReportCache::forget($house);
+        $house->touch();
+        DriveReportSyncService::scheduleSync($house);
+
+        return response()->json([
+            'success' => true,
+            'areas' => $areas,
+            'created_count' => count(array_filter($areas, fn (array $a): bool => ! ($a['existed'] ?? false))),
+        ]);
+    }
+
+    public function importBatchStatus(Request $request, PropertyHouse $house): JsonResponse
+    {
+        $batchId = $request->query('batch_id');
+        if (! is_string($batchId) || trim($batchId) === '') {
+            return response()->json(['success' => false, 'message' => 'معرّف الدفعة مطلوب.'], 422);
+        }
+
+        $rows = InspectionPhoto::query()
+            ->where('upload_batch_id', $batchId)
+            ->whereNotNull('upload_file_key')
+            ->whereHas('inspectionArea', fn ($q) => $q->where('property_house_id', $house->id))
+            ->get(['inspection_area_id', 'upload_file_key']);
+
+        $completedKeys = [];
+        foreach ($rows as $row) {
+            $areaId = (string) $row->inspection_area_id;
+            $completedKeys[$areaId] ??= [];
+            $completedKeys[$areaId][] = $row->upload_file_key;
+        }
+
+        return response()->json([
+            'success' => true,
+            'completed_keys' => $completedKeys,
+            'total_saved' => $rows->count(),
+        ]);
     }
 
     public function photosPanel(Request $request, PropertyHouse $house, InspectionArea $area): Response|\Illuminate\Http\RedirectResponse

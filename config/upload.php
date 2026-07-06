@@ -18,9 +18,12 @@ return [
     'bulk_threshold' => (int) env('UPLOAD_BULK_THRESHOLD', 40),
 
     /** دفعة أكبر + توازي أعلى للدفعات الكبيرة */
-    'bulk_chunk_size' => (int) env('UPLOAD_BULK_CHUNK_SIZE', 25),
+    'bulk_chunk_size' => (int) env('UPLOAD_BULK_CHUNK_SIZE', 30),
 
-    'bulk_parallel_requests' => (int) env('UPLOAD_BULK_PARALLEL', 3),
+    'bulk_parallel_requests' => (int) env('UPLOAD_BULK_PARALLEL', 4),
+
+    /** إعادة محاولة الرفع عند انقطاع الشبكة أو خطأ السيرفر */
+    'max_retries' => (int) env('UPLOAD_MAX_RETRIES', 4),
 
     /** تخطي ضغط المتصفح للدفعات الكبيرة (يوفر دقائق على 300+ صورة) */
     'bulk_skip_client_process' => env('UPLOAD_BULK_SKIP_PROCESS', true),
@@ -42,5 +45,10 @@ return [
     'merge_max_height' => (int) env('UPLOAD_MERGE_MAX_HEIGHT', 900),
 
     'merge_jpeg_quality' => (float) env('UPLOAD_MERGE_JPEG_QUALITY', 0.85),
+
+    /** استيراد مجلد المنزل من الجهاز */
+    'folder_import_max_areas' => (int) env('UPLOAD_FOLDER_MAX_AREAS', 30),
+    'folder_import_max_photos_per_area' => (int) env('UPLOAD_FOLDER_MAX_PHOTOS_AREA', 500),
+    'folder_import_max_total_photos' => (int) env('UPLOAD_FOLDER_MAX_PHOTOS_TOTAL', 5000),
 
 ];

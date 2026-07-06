@@ -151,32 +151,35 @@
     @stack('scripts')
 
     <!-- Custom Popup HTML -->
+    <div id="custom-popup-overlay"
+        style="position: fixed; inset: 0; z-index: 99999; background: rgba(2, 6, 23, 0.88); backdrop-filter: blur(6px); display: none;"
+        aria-hidden="true">
+    </div>
     <div id="custom-popup"
-        style="z-index: 9999;"
-        class="fixed inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-all duration-300 ">
-        <div
-            class="bg-slate-900 border border-slate-800 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.5)] p-8 max-w-md w-full mx-4 transform scale-95 transition-transform duration-300 relative overflow-hidden text-right">
+        style="position: fixed; inset: 0; z-index: 100000; display: none; align-items: center; justify-content: center; padding: 1rem;">
+        <div id="custom-popup-card"
+            style="background: #0f172a; border: 1px solid rgba(148,163,184,0.15); border-radius: 1.5rem; box-shadow: 0 0 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(16,185,129,0.08); padding: 2rem; max-width: 28rem; width: 100%; position: relative; overflow: hidden; text-align: center; transform: scale(0.95); transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1); opacity: 0; transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1), opacity 0.2s ease;">
             <!-- Decorative background elements -->
-            <div class="absolute -top-24 -right-24 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl"></div>
-            <div class="absolute -bottom-24 -left-24 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl"></div>
+            <div style="position: absolute; top: -6rem; right: -6rem; width: 12rem; height: 12rem; background: rgba(245,158,11,0.08); border-radius: 50%; filter: blur(40px); pointer-events: none;"></div>
+            <div style="position: absolute; bottom: -6rem; left: -6rem; width: 12rem; height: 12rem; background: rgba(16,185,129,0.08); border-radius: 50%; filter: blur(40px); pointer-events: none;"></div>
 
-            <div class="relative z-10 flex flex-col items-center text-center">
+            <div style="position: relative; z-index: 10; display: flex; flex-direction: column; align-items: center;">
                 <div id="popup-icon"
-                    class="flex h-16 w-16 items-center justify-center rounded-full bg-slate-800/80 border border-slate-700 text-amber-500 mb-5 shadow-lg">
-                    <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    style="display: flex; height: 4rem; width: 4rem; align-items: center; justify-content: center; border-radius: 50%; background: rgba(30,41,59,0.9); border: 1px solid rgba(71,85,105,0.6); color: #f59e0b; margin-bottom: 1.25rem; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+                    <svg style="height: 2rem; width: 2rem;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                 </div>
 
-                <h3 class="text-2xl font-bold text-white mb-3">تأكيد الإجراء</h3>
-                <p id="popup-message" class="text-base text-slate-300 mb-8 leading-relaxed">رسالة</p>
+                <h3 style="font-size: 1.4rem; font-weight: 700; color: #fff; margin-bottom: 0.75rem;">تأكيد الإجراء</h3>
+                <p id="popup-message" style="font-size: 1rem; color: #cbd5e1; margin-bottom: 2rem; line-height: 1.7;">رسالة</p>
 
-                <div class="flex items-center justify-center gap-4 w-full">
+                <div style="display: flex; align-items: center; justify-content: center; gap: 1rem; width: 100%;">
                     <button id="popup-confirm-btn"
-                        class="flex-1 py-3.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-base hover:bg-amber-400 hover:shadow-[0_0_20px_rgba(245,158,11,0.3)] transition-all">تأكيد</button>
+                        style="flex: 1; padding: 0.875rem 1rem; border-radius: 0.75rem; background: #f59e0b; color: #0c0a09; font-weight: 700; font-size: 1rem; border: none; cursor: pointer; transition: all 0.2s;">تأكيد</button>
                     <button id="popup-cancel-btn"
-                        class="flex-1 py-3.5 rounded-xl bg-slate-800 text-white font-bold text-base border border-slate-700 hover:bg-slate-700 transition-all">إلغاء</button>
+                        style="flex: 1; padding: 0.875rem 1rem; border-radius: 0.75rem; background: rgba(30,41,59,0.9); color: #f1f5f9; font-weight: 700; font-size: 1rem; border: 1px solid rgba(71,85,105,0.5); cursor: pointer; transition: all 0.2s;">إلغاء</button>
                 </div>
             </div>
         </div>
@@ -259,23 +262,29 @@
         }
 
         function openPopup() {
+            const overlay = document.getElementById('custom-popup-overlay');
             const popup = document.getElementById('custom-popup');
-            popup.classList.remove('hidden');
+            const card = document.getElementById('custom-popup-card');
+
+            overlay.style.display = 'block';
+            popup.style.display = 'flex';
             // trigger reflow
-            void popup.offsetWidth;
-            popup.classList.remove('opacity-0');
-            popup.children[0].classList.remove('scale-95');
-            popup.children[0].classList.add('scale-100');
+            void card.offsetWidth;
+            card.style.transform = 'scale(1)';
+            card.style.opacity = '1';
         }
 
         function closePopup() {
+            const overlay = document.getElementById('custom-popup-overlay');
             const popup = document.getElementById('custom-popup');
-            popup.classList.add('opacity-0');
-            popup.children[0].classList.remove('scale-100');
-            popup.children[0].classList.add('scale-95');
+            const card = document.getElementById('custom-popup-card');
+
+            card.style.transform = 'scale(0.95)';
+            card.style.opacity = '0';
             setTimeout(() => {
-                popup.classList.add('hidden');
-            }, 300);
+                popup.style.display = 'none';
+                overlay.style.display = 'none';
+            }, 250);
         }
 
         document.getElementById('popup-confirm-btn').addEventListener('click', function () {
