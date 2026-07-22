@@ -90,9 +90,14 @@
 
             <div class="rounded-xl border border-dashed border-slate-700 bg-slate-950/30 p-4">
                 <label class="mb-1 block text-xs font-medium text-slate-300">إضافة ملاحظة يدوياً</label>
+                <p class="mb-2 text-[11px] leading-relaxed text-slate-500">
+                    كود محفوظ فقط (مثل <code class="rounded bg-slate-800 px-1 text-emerald-400">201</code>) + Enter يستبدل
+                    <code class="rounded bg-slate-800 px-1 text-emerald-400">(الموقع)</code> باسم القسم. أي نص آخر يُضاف كما هو.
+                </p>
                 <div class="flex flex-col gap-2 sm:flex-row">
                     <input type="text" x-model="manualText" maxlength="2000"
-                        @keydown.enter.prevent="addManual()" placeholder="اكتب ملاحظة جديدة..."
+                        @keydown.enter.prevent="addManual()" placeholder="كود (201…) أو ملاحظة حرة..."
+                        autocomplete="off"
                         class="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none">
                     <button type="button" @click="addManual()" :disabled="!manualText.trim()"
                         class="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50">
@@ -204,6 +209,19 @@
                 photoId: null,
                 areaName: '',
                 saveUrl: '',
+                noteCodes: {
+                    '201': 'لوحظ وجود كسر في  السيراميك (Ceramic Tiles) في (الموقع)، ويحتاج إلى استبدال',
+                    '202': 'لوحظ عدم تركيب  السيراميك (Ceramic Tiles) بشكل صحيح في (الموقع)',
+                    '203': 'لوحظ وجود تشقق عمودي (Vertical Crack) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                    '204': 'لوحظ وجود تشقق أفقي (Horizontal Crack) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                    '205': 'لوحظ وجود شوائب (Surface Defects) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                    '206': 'لوحظ وجود تشققات شعرية (Hairline Cracks) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                    '207': 'لوحظ وجود تشققات شبكية (Map Cracks) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                    '208': 'لوحظ عدم تركيب مادة السيلكون (Silicone Sealant) حول النافذة في (الموقع) بشكل صحيح.',
+                    '209': 'لوحظ عدم تركيب عازل الغبار (Dust Seal) للباب الالمنيوم في (الموقع)',
+                    '210': 'لوحظ عدم تركيب مثبت باب الخشبي  (Door Stopper) في (الموقع)',
+                    '211': 'لوحظ عدم تركيب الترويبة (Grouting) بين بلاطات السيراميك في (الموقع)، ويحتاج إلى استكمال أعمال الترويبة',
+                },
 
                 openWith: function (detail) {
                     this.photoId = detail.photoId;
@@ -267,18 +285,26 @@
                 },
 
                 applyLocation: function (text) {
-                    var placeholder = '(الموقع)';
                     var out = (text || '').trim();
                     var area = (this.areaName || '').trim();
                     if (!area) return out;
-                    if (out.indexOf(placeholder) !== -1) {
-                        return out.split(placeholder).join(area).trim();
+                    if (/\(\s*الموقع\s*\)/.test(out)) {
+                        return out.replace(/\(\s*الموقع\s*\)/g, area).trim();
                     }
                     if (out.toLowerCase().indexOf(area.toLowerCase()) !== -1) {
                         return out;
                     }
                     out = out.replace(/[\.\،,\s]+$/u, '');
                     return out + ' في ' + area + '.';
+                },
+
+                resolveManualText: function (raw) {
+                    var t = (raw || '').trim();
+                    if (!t) return '';
+                    if (Object.prototype.hasOwnProperty.call(this.noteCodes, t)) {
+                        return this.applyLocation(this.noteCodes[t]);
+                    }
+                    return t;
                 },
 
                 addFromTemplate: function () {
@@ -303,13 +329,20 @@
                 },
 
                 addManual: function () {
-                    var t = (this.manualText || '').trim();
-                    if (!t) return;
+                    var finalText = this.resolveManualText(this.manualText);
+                    if (!finalText) return;
+                    if (this.notes.some(function (n) { return n.text === finalText; })) {
+                        this.manualText = '';
+                        this.statusMessage = 'هذه الملاحظة مضافة بالفعل.';
+                        this.statusClass = 'text-amber-400';
+                        return;
+                    }
                     this.notes.push({
-                        text: t,
+                        text: finalText,
                         category_id: this.selectedCategoryId > 0 ? this.selectedCategoryId : null
                     });
                     this.manualText = '';
+                    this.statusMessage = '';
                 },
 
                 removeNote: function (idx) { this.notes.splice(idx, 1); },

@@ -28,6 +28,20 @@
             selectedTemplateId: '',
             manualText: '',
             notes: [],
+            /** أكواد ملاحظات ثابتة — إدخال الكود وحده + Enter يوسّع النص ويستبدل (الموقع) */
+            noteCodes: {
+                '201': 'لوحظ وجود كسر في  السيراميك (Ceramic Tiles) في (الموقع)، ويحتاج إلى استبدال',
+                '202': 'لوحظ عدم تركيب  السيراميك (Ceramic Tiles) بشكل صحيح في (الموقع)',
+                '203': 'لوحظ وجود تشقق عمودي (Vertical Crack) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                '204': 'لوحظ وجود تشقق أفقي (Horizontal Crack) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                '205': 'لوحظ وجود شوائب (Surface Defects) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                '206': 'لوحظ وجود تشققات شعرية (Hairline Cracks) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                '207': 'لوحظ وجود تشققات شبكية (Map Cracks) في الجدار في (الموقع)، ويحتاج إلى المعالجة وإعادة التشطيب والصباغة',
+                '208': 'لوحظ عدم تركيب مادة السيلكون (Silicone Sealant) حول النافذة في (الموقع) بشكل صحيح.',
+                '209': 'لوحظ عدم تركيب عازل الغبار (Dust Seal) للباب الالمنيوم في (الموقع)',
+                '210': 'لوحظ عدم تركيب مثبت باب الخشبي  (Door Stopper) في (الموقع)',
+                '211': 'لوحظ عدم تركيب الترويبة (Grouting) بين بلاطات السيراميك في (الموقع)، ويحتاج إلى استكمال أعمال الترويبة',
+            },
 
             init() {
                 var d = {};
@@ -73,18 +87,28 @@
             },
 
             applyLocation(text) {
-                var placeholder = '(الموقع)';
                 var out = (text || '').trim();
                 var area = (this.areaName || '').trim();
                 if (!area) return out;
-                if (out.indexOf(placeholder) !== -1) {
-                    return out.split(placeholder).join(area).trim();
+                // (الموقع) أو ( الموقع) بمسافات اختيارية
+                if (/\(\s*الموقع\s*\)/.test(out)) {
+                    return out.replace(/\(\s*الموقع\s*\)/g, area).trim();
                 }
                 if (out.toLowerCase().indexOf(area.toLowerCase()) !== -1) {
                     return out;
                 }
                 out = out.replace(/[\.،,\s]+$/u, '');
                 return out + ' في ' + area + '.';
+            },
+
+            resolveManualText(raw) {
+                var t = (raw || '').trim();
+                if (!t) return '';
+                // الكود وحده فقط (مثل 201) — أي كلام إضافي يُضاف كنص عادي
+                if (Object.prototype.hasOwnProperty.call(this.noteCodes, t)) {
+                    return this.applyLocation(this.noteCodes[t]);
+                }
+                return t;
             },
 
             addFromTemplate() {
@@ -104,10 +128,17 @@
             },
 
             addManual() {
-                var t = (this.manualText || '').trim();
-                if (!t) return;
+                var finalText = this.resolveManualText(this.manualText);
+                if (!finalText) return;
+                var self = this;
+                if (this.notes.some(function (n) {
+                    return n.text === finalText && Number(n.category_id || 0) === Number(self.selectedCategoryId || 0);
+                })) {
+                    this.manualText = '';
+                    return;
+                }
                 this.notes.push({
-                    text: t,
+                    text: finalText,
                     category_id: this.selectedCategoryId > 0 ? this.selectedCategoryId : null,
                 });
                 this.manualText = '';
@@ -216,11 +247,17 @@
     {{-- Manual note input --}}
     <div class="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3">
         <label class="mb-1 block text-xs font-medium text-slate-300">إضافة ملاحظة يدوياً</label>
+        <p class="mb-2 text-[11px] leading-relaxed text-slate-500">
+            اكتب كوداً محفوظاً فقط (مثل <code class="rounded bg-slate-800 px-1 text-emerald-400">201</code>) ثم Enter —
+            تُستبدل <code class="rounded bg-slate-800 px-1 text-emerald-400">(الموقع)</code> باسم القسم تلقائياً.
+            أي نص آخر يُضاف كما هو.
+        </p>
         <div class="flex flex-col gap-2 sm:flex-row">
             <input type="text" x-model="manualText" maxlength="2000"
                 @keydown.enter.prevent="addManual()"
-                placeholder="اكتب ملاحظة جديدة..."
-                class="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none">
+                placeholder="كود (201…) أو ملاحظة حرة..."
+                class="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none"
+                autocomplete="off">
             <button type="button" @click="addManual()" :disabled="!manualText.trim()"
                 class="shrink-0 rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50">
                 إضافة
