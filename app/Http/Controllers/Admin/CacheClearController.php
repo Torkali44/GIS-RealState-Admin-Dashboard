@@ -3,11 +3,15 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Services\InspectionReportPdfGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
+use ReflectionMethod;
 use Symfony\Component\Console\Output\BufferedOutput;
+use Throwable;
 
 /**
  * مسح كاش Laravel من المتصفح — بدون Terminal (Namecheap / cPanel).
@@ -34,7 +38,10 @@ class CacheClearController extends Controller
             $lines[] = 'SKIP: OPcache غير متاح';
         }
 
-        $lines[] = '=== تم بنجاح — يمكنك إغلاق هذه الصفحة ===';
+        $this->purgeReportCaches($lines);
+        $this->reportLogoStatus($lines);
+
+        $lines[] = '=== تم بنجاح — حمّل PDF بزر «تحديث» لرؤية اللوجو الجديد ===';
 
         $log = implode("\n", $lines);
         @file_put_contents(storage_path('logs/last-cache-clear.txt'), $log);
@@ -46,6 +53,72 @@ class CacheClearController extends Controller
                 ? date('Y-m-d H:i:s', File::lastModified(storage_path('logs/last-cache-clear.txt')))
                 : null,
         ]);
+    }
+
+    /**
+     * @param  list<string>  $lines
+     */
+    private function purgeReportCaches(array &$lines): void
+    {
+        $deletedPdf = 0;
+        try {
+            $disk = Storage::disk('public');
+            if ($disk->exists('reports')) {
+                foreach ($disk->files('reports') as $file) {
+                    $base = basename($file);
+                    if (str_starts_with($base, 'inspection-') && str_ends_with($base, '.pdf')) {
+                        $disk->delete($file);
+                        $deletedPdf++;
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+            $lines[] = 'ERR: حذف PDF كاش — '.$e->getMessage();
+        }
+        $lines[] = 'OK: حذف PDF كاش التقارير ('.$deletedPdf.' ملف)';
+
+        $logoCache = storage_path('app/reports/logo-cache');
+        $deletedLogo = 0;
+        if (is_dir($logoCache)) {
+            foreach (glob($logoCache.DIRECTORY_SEPARATOR.'*') ?: [] as $f) {
+                if (is_file($f) && @unlink($f)) {
+                    $deletedLogo++;
+                }
+            }
+        }
+        $lines[] = 'OK: حذف كاش اللوجو ('.$deletedLogo.' ملف)';
+    }
+
+    /**
+     * @param  list<string>  $lines
+     */
+    private function reportLogoStatus(array &$lines): void
+    {
+        $lines[] = '--- فحص اللوجو ---';
+        $lines[] = 'config REPORT_LOGO_PATH = '.(string) config('report.logo_path');
+
+        $checks = [
+            public_path('images/newLog.jpeg'),
+            public_path('images/newLog.jpg'),
+            public_path('images/company-logo.png'),
+        ];
+        foreach ($checks as $path) {
+            $lines[] = (is_file($path) ? 'FOUND ' : 'MISSING ').$path;
+        }
+
+        try {
+            $generator = app(InspectionReportPdfGenerator::class);
+            $method = new ReflectionMethod($generator, 'resolveLogoPath');
+            $method->setAccessible(true);
+            $resolved = $method->invoke($generator);
+            $lines[] = 'RESOLVED logo = '.(is_string($resolved) ? $resolved : 'NULL');
+            if (is_string($resolved) && is_file($resolved)) {
+                $info = @getimagesize($resolved);
+                $lines[] = 'logo size = '.($info ? ($info[0].'x'.$info[1].' '.$info['mime']) : 'unreadable');
+            }
+        } catch (Throwable $e) {
+            $lines[] = 'ERR: resolveLogoPath — '.$e->getMessage();
+        }
     }
 
     private function authorizeAccess(Request $request): void

@@ -54,8 +54,26 @@ final class InspectionReportCache
             ->max(DB::raw('UNIX_TIMESTAMP(updated_at)'));
 
         $orderHash = self::orderFingerprint($house);
+        $logoHash = self::logoFingerprint();
 
-        return "pc{$photoCount}-p{$photoUnix}-h{$houseUnix}-a{$areaUnix}-o{$orderHash}";
+        return "pc{$photoCount}-p{$photoUnix}-h{$houseUnix}-a{$areaUnix}-o{$orderHash}-l{$logoHash}";
+    }
+
+    /**
+     * تغيير ملف اللوجو أو تاريخ تعديله يبطل كاش PDF تلقائياً.
+     */
+    public static function logoFingerprint(): string
+    {
+        $relative = (string) config('report.logo_path', 'images/newLog.jpeg');
+        $absolute = public_path($relative);
+        if (! is_file($absolute)) {
+            $absolute = public_path('images/newLog.jpeg');
+        }
+        if (! is_file($absolute)) {
+            return '0';
+        }
+
+        return substr(hash('sha256', $absolute.'|'.(string) filemtime($absolute).'|'.(string) filesize($absolute)), 0, 10);
     }
 
     public static function orderFingerprint(PropertyHouse $house): string

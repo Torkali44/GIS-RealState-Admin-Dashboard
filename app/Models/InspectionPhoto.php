@@ -96,13 +96,29 @@ class InspectionPhoto extends Model
 
     /**
      * Combined description and notes used for display/PDF.
+     * Deduplicates notes by normalised text so the same note added under
+     * multiple categories never appears more than once in the PDF box.
      */
     public function combinedDescription(): string
     {
-        $parts = $this->notesList();
+        $seen  = [];
+        $parts = [];
+
+        foreach ($this->notesList() as $note) {
+            $key = mb_strtolower(preg_replace('/\s+/u', ' ', trim($note)) ?? trim($note));
+            if ($key === '' || isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $parts[]    = $note;
+        }
+
         $desc = trim((string) $this->description);
-        if ($desc !== '' && ! in_array($desc, $parts, true)) {
-            $parts[] = $desc;
+        if ($desc !== '') {
+            $key = mb_strtolower(preg_replace('/\s+/u', ' ', $desc) ?? $desc);
+            if (! isset($seen[$key])) {
+                $parts[] = $desc;
+            }
         }
 
         return implode("\n", $parts);

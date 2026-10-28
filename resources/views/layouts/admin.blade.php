@@ -50,15 +50,13 @@
     <header class="sticky top-0 z-40 border-b border-white/5 bg-slate-950/80 backdrop-blur-xl">
         <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
             <div class="flex items-center gap-3">
-                <div
-                    class="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500 shadow-lg shadow-emerald-500/20">
-                    <svg class="h-5 w-5 text-slate-950" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
-                            d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                    </svg>
-                </div>
-                <a href="{{ route('admin.houses.index') }}" class="text-xl font-bold tracking-tight text-white">
-                    جي اي اس <span class="text-emerald-500">للمعاينة</span>
+                <a href="{{ route('admin.houses.index') }}" class="flex items-center gap-3">
+                    <img src="{{ asset(config('report.logo_path', 'images/newLog.jpeg')) }}"
+                        alt="GIS"
+                        class="h-10 w-auto max-w-[120px] object-contain rounded-lg bg-white/95 p-1 shadow-lg shadow-emerald-500/10">
+                    <span class="text-xl font-bold tracking-tight text-white">
+                        جي اي اس <span class="text-emerald-500">للمعاينة</span>
+                    </span>
                 </a>
             </div>
 

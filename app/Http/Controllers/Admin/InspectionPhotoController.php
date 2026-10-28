@@ -532,15 +532,9 @@ class InspectionPhotoController extends Controller
             'notes' => ['nullable', 'array'],
             'composite' => ['nullable', 'file', 'image', 'max:25600'],
             'clear_arrow' => ['sometimes', 'boolean'],
-            'apply_category_id' => ['nullable', 'integer', 'exists:note_categories,id'],
         ]);
 
         $notes = $this->normalizeIncomingNotes($request->input('notes', []));
-        $applyCategoryId = isset($data['apply_category_id']) ? (int) $data['apply_category_id'] : 0;
-        if ($applyCategoryId > 0) {
-            $notes = $this->applyCategoryToNotes($notes, $applyCategoryId, $data['description'] ?? null);
-            $data['description'] = null;
-        }
 
         if ($request->boolean('clear_arrow')) {
             if ($photo->composite_path && Storage::disk('public')->exists($photo->composite_path)) {
@@ -628,14 +622,9 @@ class InspectionPhotoController extends Controller
 
         $data = $request->validate([
             'notes' => ['nullable', 'array'],
-            'apply_category_id' => ['nullable', 'integer', 'exists:note_categories,id'],
         ]);
 
         $notes = $this->normalizeIncomingNotes($request->input('notes', []));
-        $applyCategoryId = isset($data['apply_category_id']) ? (int) $data['apply_category_id'] : 0;
-        if ($applyCategoryId > 0) {
-            $notes = $this->applyCategoryToNotes($notes, $applyCategoryId, null);
-        }
 
         $photo->notes_json = empty($notes) ? null : $notes;
         $photo->save();
@@ -664,36 +653,6 @@ class InspectionPhotoController extends Controller
      * @param  array<int, mixed>  $incoming
      * @return array<int, array{text:string,category_id:int|null}>
      */
-    /**
-     * @param  array<int, array{text:string,category_id:int|null}>  $notes
-     * @return array<int, array{text:string,category_id:int|null}>
-     */
-    private function applyCategoryToNotes(array $notes, int $categoryId, ?string $description): array
-    {
-        $notes = array_map(static function (array $note) use ($categoryId): array {
-            $note['category_id'] = $categoryId;
-
-            return $note;
-        }, $notes);
-
-        $desc = trim((string) $description);
-        if ($desc === '') {
-            return $notes;
-        }
-
-        $alreadyListed = collect($notes)->contains(
-            static fn (array $note): bool => trim((string) ($note['text'] ?? '')) === $desc
-        );
-        if (! $alreadyListed) {
-            $notes[] = [
-                'text' => $desc,
-                'category_id' => $categoryId,
-            ];
-        }
-
-        return $notes;
-    }
-
     private function normalizeIncomingNotes(array $incoming): array
     {
         return collect($incoming)

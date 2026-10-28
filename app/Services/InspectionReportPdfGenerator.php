@@ -928,17 +928,68 @@ class InspectionReportPdfGenerator
 
     private function resolveLogoPath(): ?string
     {
-        $candidates = array_filter([
-            config('report.logo_path'),
-            'images/company-logo_new.png',
-            'images/company-logo.png',
-            'images/logo.png',
-        ]);
+        // اللوجو الجديد أولاً دائماً (حتى لو .env على السيرفر يشير للقديم)
+        $preferred = [
+            'images/newLog.jpeg',
+            'images/newLog.jpg',
+            'images/newlog.jpeg',
+            'images/NewLog.jpeg',
+        ];
 
-        foreach ($candidates as $candidate) {
+        foreach ($preferred as $candidate) {
             $path = $this->resolveReportAssetPath($candidate);
             if ($path !== null) {
                 return $path;
+            }
+        }
+
+        // بحث بدون حساسية لحالة الأحرف داخل public/images (Linux/Namecheap)
+        $scanned = $this->findLogoInImagesDir();
+        if ($scanned !== null) {
+            return $scanned;
+        }
+
+        // بعدين إعدادات .env ثم أي لوجو قديم كملجأ أخير
+        $fallbacks = array_values(array_unique(array_filter([
+            (string) config('report.logo_path', ''),
+            'images/company-logo_new.png',
+            'images/company-logo.png',
+            'images/logo.png',
+        ])));
+
+        foreach ($fallbacks as $candidate) {
+            $path = $this->resolveReportAssetPath($candidate);
+            if ($path !== null) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
+    private function findLogoInImagesDir(): ?string
+    {
+        $dirs = array_unique(array_filter([
+            public_path('images'),
+            base_path('public/images'),
+            base_path('public_html/images'),
+            dirname(public_path()).DIRECTORY_SEPARATOR.'images',
+        ]));
+
+        foreach ($dirs as $dir) {
+            if (! is_dir($dir)) {
+                continue;
+            }
+            foreach (scandir($dir) ?: [] as $file) {
+                if ($file === '.' || $file === '..') {
+                    continue;
+                }
+                if (preg_match('/^newlog\.(jpe?g|png|webp)$/i', $file)) {
+                    $full = $dir.DIRECTORY_SEPARATOR.$file;
+                    if (is_file($full) && is_readable($full)) {
+                        return $full;
+                    }
+                }
             }
         }
 
@@ -950,20 +1001,21 @@ class InspectionReportPdfGenerator
      */
     private function logoBoxMmForPdf(?string $logoPath): array
     {
-        $maxW = max(28.0, min(55.0, (float) config('report.logo_width_mm', 44)));
-        $targetH = max(14.0, min(26.0, (float) config('report.logo_height_mm', 20)));
-        $logoH = $targetH;
+        $maxW = max(28.0, min(58.0, (float) config('report.logo_width_mm', 44)));
+        $maxH = max(14.0, min(28.0, (float) config('report.logo_height_mm', 22)));
         $logoW = $maxW;
+        $logoH = $maxH;
 
         if ($logoPath && is_readable($logoPath)) {
             $size = @getimagesize($logoPath);
             if ($size && $size[0] > 0 && $size[1] > 0) {
                 $ratio = $size[0] / $size[1];
-                $logoH = $targetH;
-                $logoW = min($maxW, $logoH * $ratio);
-                if ($logoW < 28.0) {
-                    $logoW = 28.0;
-                    $logoH = min($targetH, $logoW / $ratio);
+                // حافظ على النسبة — مناسب للوجو الطويل مثل newLog.jpeg
+                $logoH = $maxH;
+                $logoW = $logoH * $ratio;
+                if ($logoW > $maxW) {
+                    $logoW = $maxW;
+                    $logoH = $logoW / $ratio;
                 }
             }
         }
@@ -972,12 +1024,16 @@ class InspectionReportPdfGenerator
     }
 
     /**
-     * نسخة أوضح للشعار داخل PDF (تكبير PNG الصغير قبل التضمين).
+     * يحضّر الشعار كـ PNG واضح لـ TCPDF (ويتجنّب مشاكل JPEG/EXIF وكاش قديم).
      */
     private function prepareLogoPathForPdf(?string $logoPath): ?string
     {
         if ($logoPath === null || ! is_readable($logoPath)) {
             return null;
+        }
+
+        if (! extension_loaded('gd')) {
+            return $logoPath;
         }
 
         $info = @getimagesize($logoPath);
@@ -987,21 +1043,21 @@ class InspectionReportPdfGenerator
 
         [$wPx, $hPx, $type] = $info;
         $minW = max(200, (int) config('report.logo_embed_min_width', 420));
-
-        if ($wPx >= $minW || ! extension_loaded('gd')) {
-            return $logoPath;
+        $scale = $wPx > 0 && $wPx < $minW ? ($minW / $wPx) : 1.0;
+        // لا نكبّر أكثر من اللازم؛ نضمن على الأقل وضوحاً جيداً للطباعة
+        if ($scale < 1.0) {
+            $scale = 1.0;
         }
-
-        $scale = $minW / max(1, $wPx);
-        $newW = (int) round($wPx * $scale);
-        $newH = (int) round($hPx * $scale);
+        $newW = max(1, (int) round($wPx * $scale));
+        $newH = max(1, (int) round($hPx * $scale));
 
         $cacheDir = storage_path('app/reports/logo-cache');
         if (! is_dir($cacheDir)) {
             @mkdir($cacheDir, 0755, true);
         }
 
-        $cachePath = $cacheDir.DIRECTORY_SEPARATOR.'logo-'.md5($logoPath.'|'.filemtime($logoPath).'|'.$newW).'.png';
+        $mtime = @filemtime($logoPath) ?: 0;
+        $cachePath = $cacheDir.DIRECTORY_SEPARATOR.'logo-'.md5($logoPath.'|'.$mtime.'|'.$newW.'|v2').'.png';
         if (is_file($cachePath) && filesize($cachePath) > 100) {
             return $cachePath;
         }
@@ -1025,17 +1081,16 @@ class InspectionReportPdfGenerator
                 return $logoPath;
             }
 
-            imagealphablending($dst, false);
-            imagesavealpha($dst, true);
-            $transparent = imagecolorallocatealpha($dst, 255, 255, 255, 127);
-            if ($transparent !== false) {
-                imagefilledrectangle($dst, 0, 0, $newW, $newH, $transparent);
+            // خلفية بيضاء (مناسب للوجو JPEG على رأس التقرير)
+            imagealphablending($dst, true);
+            imagesavealpha($dst, false);
+            $white = imagecolorallocate($dst, 255, 255, 255);
+            if ($white !== false) {
+                imagefilledrectangle($dst, 0, 0, $newW, $newH, $white);
             }
             imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $wPx, $hPx);
             imagedestroy($src);
 
-            imagealphablending($dst, true);
-            imagesavealpha($dst, true);
             imagepng($dst, $cachePath, 6);
             imagedestroy($dst);
 
@@ -1062,14 +1117,18 @@ class InspectionReportPdfGenerator
             return $candidate;
         }
 
-        $publicPath = public_path($candidate);
-        if (is_file($publicPath)) {
-            return $publicPath;
-        }
+        $try = [
+            public_path($candidate),
+            base_path($candidate),
+            base_path('public/'.$candidate),
+            base_path('public_html/'.$candidate),
+            dirname(public_path()).DIRECTORY_SEPARATOR.ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $candidate), DIRECTORY_SEPARATOR),
+        ];
 
-        $basePath = base_path($candidate);
-        if (is_file($basePath)) {
-            return $basePath;
+        foreach ($try as $path) {
+            if (is_string($path) && $path !== '' && is_file($path) && is_readable($path)) {
+                return $path;
+            }
         }
 
         return null;

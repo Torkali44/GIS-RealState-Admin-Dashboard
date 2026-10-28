@@ -182,13 +182,6 @@
                 });
             },
 
-            applyCategoryToAll() {
-                if (this.selectedCategoryId <= 0) return;
-                var catId = this.selectedCategoryId;
-                this.notes.forEach(function (n) {
-                    n.category_id = catId;
-                });
-            },
         };
     };
 </script>
@@ -201,7 +194,8 @@
         <div class="min-w-0 flex-1">
             <h3 class="text-base font-bold text-emerald-300">الملاحظات الجاهزة للقسم</h3>
             <p class="mt-1 text-xs text-slate-400">
-                اختر من القائمة لإضافة الملاحظة. كلمة <code class="rounded bg-slate-800 px-1 text-emerald-400">(الموقع)</code>
+                اختر التصنيف ثم أضف الملاحظة — كل ملاحظة تحتفظ بتصنيفها حتى لو أضفت ملاحظات من تصنيفات مختلفة.
+                كلمة <code class="rounded bg-slate-800 px-1 text-emerald-400">(الموقع)</code>
                 تُستبدل تلقائياً باسم القسم
                 <span class="font-bold text-emerald-300" x-text="areaName || 'الحالي'"></span>.
             </p>
@@ -216,7 +210,7 @@
     <div class="grid gap-3 sm:grid-cols-2">
         <div class="min-w-0">
             <label class="mb-1 block text-xs font-medium text-slate-300">التصنيف</label>
-            <select x-model.number="selectedCategoryId" @change="selectedTemplateId = ''; applyCategoryToAll()"
+            <select x-model.number="selectedCategoryId" @change="selectedTemplateId = ''"
                 class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none">
                 <option value="0">— اختر تصنيفاً —</option>
                 <template x-for="cat in categories" :key="cat.id">
@@ -320,9 +314,7 @@
         </p>
     </div>
 
-    <input type="hidden" name="apply_category_id" :value="selectedCategoryId > 0 ? selectedCategoryId : ''">
-
-    {{-- Hidden inputs that get submitted with the form --}}
+    {{-- Hidden inputs that get submitted with the form — لكل ملاحظة category_id خاص بها --}}
     <template x-for="(note, idx) in notes" :key="'in-' + idx">
         <div>
             <input type="hidden" :name="'notes[' + idx + '][text]'" :value="note.text">

@@ -68,7 +68,7 @@
 
         <div class="flex w-full flex-wrap items-stretch gap-3 md:w-auto md:justify-end">
              <a
-                    href="{{ route('admin.houses.report', ['house' => $house, 'inline' => 1, 'v' => $reportV]) }}"
+                    href="{{ route('admin.houses.report', ['house' => $house, 'inline' => 1, 'refresh' => 1, 'v' => $reportV]) }}"
                     data-pdf-export
                     target="_blank"
                     class="group flex items-center gap-2 rounded-xl bg-emerald-500/20 px-4 py-3 font-bold text-emerald-400 transition hover:bg-emerald-500 hover:text-slate-950"
@@ -80,14 +80,14 @@
                     <span>عرض التقرير</span>
                 </a> 
 
-            <a href="{{ route('admin.houses.report', ['house' => $house, 'v' => $reportV]) }}"
+            <a href="{{ route('admin.houses.report', ['house' => $house, 'refresh' => 1, 'v' => $reportV]) }}"
                 data-pdf-export
                 class="group flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-6 py-3 font-bold text-slate-950 transition hover:bg-emerald-400 hover:shadow-[0_0_20px_rgba(16,185,129,0.2)] sm:w-auto">
                 <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                 </svg>
-                <span>تحميل PDF</span>
+                <span>تحميل PDF (تحديث)</span>
             </a>
 
             <a href="{{ route('admin.houses.report', ['house' => $house, 'format' => 'word']) }}"

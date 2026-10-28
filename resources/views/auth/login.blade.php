@@ -10,10 +10,10 @@
 
         <div class="glass-card relative z-10 w-full max-w-md rounded-3xl p-8 lg:p-10 shadow-2xl">
             <div class="mb-10 text-center">
-                <div class="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500 shadow-xl shadow-emerald-500/30">
-                    <svg class="h-10 w-10 text-slate-950" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 00-2 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
+                <div class="mx-auto mb-6 flex h-20 w-auto items-center justify-center">
+                    <img src="{{ asset(config('report.logo_path', 'images/newLog.jpeg')) }}"
+                        alt="GIS"
+                        class="h-16 w-auto max-w-[180px] object-contain rounded-2xl bg-white/95 p-2 shadow-xl shadow-emerald-500/20">
                 </div>
                 <h1 class="text-3xl font-black tracking-tight text-white">تسجيل الدخول</h1>
                 <p class="mt-3 text-slate-400">لوحة التحكم الخاصة بالمشرفين فقط</p>

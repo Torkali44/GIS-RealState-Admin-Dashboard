@@ -6,10 +6,10 @@ return [
     |--------------------------------------------------------------------------
     | مسارات أصول PDF (نسبية من مجلد public أو مسار مطلق على السيرفر)
     |--------------------------------------------------------------------------
-    | مثال نسبي: images/company-logo.png
-    | مثال مطلق: /home/username/public_html/images/company-logo.png
+    | مثال نسبي: images/newLog.jpeg
+    | مثال مطلق: /home/username/public_html/images/newLog.jpeg
     */
-    'logo_path' => env('REPORT_LOGO_PATH', 'images/company-logo_new.png'),
+    'logo_path' => env('REPORT_LOGO_PATH', 'images/newLog.jpeg'),
 
     /** عرض الشعار في PDF (مم) */
     'logo_width_mm' => (float) env('REPORT_LOGO_WIDTH_MM', 44),

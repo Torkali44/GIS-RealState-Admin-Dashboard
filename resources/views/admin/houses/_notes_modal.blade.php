@@ -53,14 +53,14 @@
         <div class="flex-1 space-y-4 overflow-y-auto px-6 py-5">
             <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-4 space-y-3">
                 <p class="text-xs text-slate-400">
-                    اختر التصنيف ثم ملاحظة جاهزة. كلمة
-                    <code class="rounded bg-slate-800 px-1 text-emerald-400">(الموقع)</code>
+                    اختر التصنيف ثم ملاحظة جاهزة — كل ملاحظة تحتفظ بتصنيفها.
+                    كلمة <code class="rounded bg-slate-800 px-1 text-emerald-400">(الموقع)</code>
                     تُستبدل تلقائياً باسم القسم الحالي.
                 </p>
                 <div class="grid gap-3 sm:grid-cols-2">
                     <div>
                         <label class="mb-1 block text-xs font-medium text-slate-300">التصنيف</label>
-                        <select x-model.number="selectedCategoryId" @change="selectedTemplateId = ''; applyCategoryToAll()"
+                        <select x-model.number="selectedCategoryId" @change="selectedTemplateId = ''"
                             class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none">
                             <option value="0">— اختر تصنيفاً —</option>
                             <template x-for="cat in categories" :key="cat.id">
@@ -276,14 +276,6 @@
                     return 'التصنيف: ' + (cat ? String(cat.name || '').trim() : 'أخرى');
                 },
 
-                applyCategoryToAll: function () {
-                    if (this.selectedCategoryId <= 0) return;
-                    var catId = this.selectedCategoryId;
-                    this.notes.forEach(function (n) {
-                        n.category_id = catId;
-                    });
-                },
-
                 applyLocation: function (text) {
                     var out = (text || '').trim();
                     var area = (this.areaName || '').trim();
@@ -367,16 +359,9 @@
                     self.saving = true;
                     self.statusMessage = '';
 
-                    if (self.selectedCategoryId > 0) {
-                        self.applyCategoryToAll();
-                    }
-
                     var body = new FormData();
                     body.append('_token', csrfToken);
                     body.append('_method', 'PATCH');
-                    if (self.selectedCategoryId > 0) {
-                        body.append('apply_category_id', String(self.selectedCategoryId));
-                    }
                     self.notes.forEach(function (n, idx) {
                         body.append('notes[' + idx + '][text]', n.text || '');
                         if (n.category_id) {

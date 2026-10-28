@@ -16,7 +16,7 @@
             <div class="flex items-center gap-2">
                 <div class="flex h-10 w-10 items-center justify-center rounded-xl  shadow-lg shadow-emerald-500/30">
                    
-                    <img src="{{ asset('images/company-logo.png') }}" class="h-12 w-auto max-w-[140px] object-contain" alt="GIS">
+                    <img src="{{ asset(config('report.logo_path', 'images/newLog.jpeg')) }}" class="h-12 w-auto max-w-[140px] object-contain" alt="GIS">
                 </div>
                 <span class="text-xl font-bold tracking-tight text-white">  جي اي اس <span class="text-emerald-500">للمعاينة </span></span>
             </div>

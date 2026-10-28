@@ -138,8 +138,8 @@ class InspectionReportWordGenerator
     private function resolveCategoryId(array $entry, array $categories): ?int
     {
         $catId = $entry['category_id'] ?? null;
-        if (is_int($catId) && $catId > 0) {
-            return $catId;
+        if (is_numeric($catId) && (int) $catId > 0) {
+            return (int) $catId;
         }
 
         $text = $this->normalizeForDedupe((string) ($entry['text'] ?? ''));

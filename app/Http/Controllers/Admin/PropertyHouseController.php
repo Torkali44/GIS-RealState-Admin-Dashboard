@@ -203,7 +203,6 @@ class PropertyHouseController extends Controller
 
         $filename = 'inspection-' . $house->id . '.pdf';
         $disk = Storage::disk('public');
-        $finalPath = 'reports/'.$filename;
 
         @set_time_limit(0);
         @ignore_user_abort(true);
@@ -212,16 +211,13 @@ class PropertyHouseController extends Controller
 
         $photoCount = $house->photos()->count();
 
-        if (! $request->boolean('refresh') && $disk->exists($finalPath)) {
-            return response()->file($disk->path($finalPath), [
-                'Content-Type' => 'application/pdf',
-                'Content-Disposition' => ($request->query('inline') ? 'inline' : 'attachment').'; filename="'.$filename.'"',
-                'Cache-Control' => 'private, max-age=3600',
-            ]);
+        // احذف أي PDF ثابت قديم inspection-{id}.pdf (كان يتجاهل تغيير اللوجو)
+        $legacyPath = 'reports/'.$filename;
+        if ($disk->exists($legacyPath)) {
+            $disk->delete($legacyPath);
         }
 
-        // ── Cache key يعتمد على updated_at للمنزل والصور ──
-        // أي تعديل على صورة أو قسم يغير updated_at فيتغير الـ cache key تلقائياً
+        // ── Cache key يعتمد على updated_at + بصمة اللوجو ──
         $cachePath = InspectionReportCache::relativePath($house);
         $useCache = !$request->boolean('refresh') && InspectionReportCache::exists($house);
 
